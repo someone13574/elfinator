@@ -1,0 +1,4 @@
+; loader.dll definition
+LIBRARY loader.dll
+EXPORTS
+    write_message
