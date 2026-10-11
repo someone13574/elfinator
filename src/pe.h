@@ -30,6 +30,8 @@ typedef struct __attribute__((packed)) {
 
 void pe_print_file_header(const ImageFileHeader* header);
 
+enum { IMAGE_DIRECTORY_ENTRY_BASERELOC = 5 };
+
 typedef struct __attribute__((packed)) {
     uint32_t virtual_address;
     uint32_t size;
@@ -79,4 +81,40 @@ typedef struct __attribute__((packed)) {
 void check_nt_headers(const ImageNtHeaders64* headers);
 void pe_print_nt_headers_64(const ImageNtHeaders64* headers);
 
+typedef struct __attribute__((packed)) {
+    uint8_t name[8];
+
+    union {
+        uint32_t physical_address;
+        uint32_t virtual_size;
+    } misc;
+
+    uint32_t virtual_address;
+    uint32_t size_of_raw_data;
+    uint32_t pointer_to_raw_data;
+    uint32_t pointer_to_relocations;
+    uint32_t pointer_to_line_numbers;
+    uint16_t number_of_relocations;
+    uint16_t number_of_line_numbers;
+    uint32_t characteristics;
+} ImageSectionHeader;
+
+enum {
+    IMAGE_REL_BASED_ABSOLUTE = 0,
+    IMAGE_REL_BASED_HIGH = 1,
+    IMAGE_REL_BASED_LOW = 2,
+    IMAGE_REL_BASED_HIGHLOW = 3,
+    IMAGE_REL_BASED_HIGHADJ = 4,
+    IMAGE_REL_BASED_DIR64 = 10
+};
+
+typedef struct __attribute__((packed)) {
+    uint32_t virtual_address;
+    uint32_t size_of_block;
+} ImageBaseRelocation;
+
 void* rva_offset(uint8_t* base, size_t offset);
+void map_image(
+    uint8_t* file, size_t file_size, const ImageDosHeader* dos_header,
+    const ImageNtHeaders64* nt_headers
+);

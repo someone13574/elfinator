@@ -76,5 +76,8 @@ int main(int argc, char** argv) {
     pe_print_dos_header(dos_header);
     pe_print_nt_headers_64(nt_headers);
 
+    printf("---------------\n");
+    map_image(file, file_size, dos_header, nt_headers);
+
     return 0;
 }

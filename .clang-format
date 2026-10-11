@@ -4,7 +4,9 @@ ColumnLimit: 100
 PointerAlignment: Left
 AlignAfterOpenBracket: BlockIndent
 ContinuationIndentWidth: 4
+IndentCaseLabels: true
 AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Empty
 SeparateDefinitionBlocks: Always
 IncludeBlocks: Regroup
 IncludeCategories:
