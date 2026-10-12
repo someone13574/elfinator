@@ -15,6 +15,9 @@
 #include "pe_types.h"
 #include "util.h"
 
+#define LOADER_PAGE_SIZE 0x1000
+#define LOADER_IMAGE_ALIGNMENT 0x10000
+
 static void apply_relocations(uint8_t* base, size_t image_size, const ImageOptionalHeaders64* opt) {
     assert(base && opt);
 
@@ -60,11 +63,8 @@ static void apply_relocations(uint8_t* base, size_t image_size, const ImageOptio
                 }
                 case IMAGE_REL_BASED_DIR64: {
                     size_t target = (size_t)block->virtual_address + (size_t)offset;
-                    if (target % 8 != 0) {
-                        pmsg_exit("DIR64 relocation target not 8-byte aligned");
-                    }
-
-                    uint64_t* slot = rva_offset_ranged(base, target, 64, image_size);
+                    u64_align1* slot =
+                        rva_offset_ranged(base, target, sizeof(u64_align1), image_size);
                     *slot += (uint64_t)delta;
                     fixed_entries++;
                     break;
@@ -148,6 +148,14 @@ static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptiona
 static void set_protections(
     uint8_t* base, const ImageSectionHeader* sections, uint16_t num_sections, size_t image_size
 ) {
+    assert(base && image_size % LOADER_PAGE_SIZE == 0);
+
+    size_t num_pages = image_size / LOADER_PAGE_SIZE;
+    uint8_t* page_prots = calloc(num_pages, 1);
+    if (!page_prots) {
+        perror_exit("calloc page protections");
+    }
+
     for (uint16_t idx = 0; idx < num_sections; idx++) {
         int prot = 0;
         if (sections[idx].characteristics & 0x20000000u) {
@@ -169,14 +177,16 @@ static void set_protections(
         size_t virtual_size = sections[idx].virtual_size > sections[idx].size_of_raw_data
                                   ? sections[idx].virtual_size
                                   : sections[idx].size_of_raw_data;
-        size_t size = round_up_pow2(virtual_size, 0x1000);
-        if (size == 0) {
+        if (virtual_size == 0) {
             continue;
         }
 
-        void* addr = rva_offset_ranged(base, sections[idx].virtual_address, size, image_size);
-        if (mprotect(addr, size, prot) != 0) {
-            perror_exit("mprotect");
+        size_t start = sections[idx].virtual_address;
+        rva_offset_ranged(base, start, virtual_size, image_size);
+        size_t first_page = start / LOADER_PAGE_SIZE;
+        size_t last_page = (start + virtual_size - 1) / LOADER_PAGE_SIZE;
+        for (size_t page = first_page; page <= last_page; page++) {
+            page_prots[page] |= prot;
         }
 
         char name[9] = {0};
@@ -186,10 +196,31 @@ static void set_protections(
             (prot & PROT_WRITE) ? 'w' : '-', (prot & PROT_EXEC) ? 'x' : '-'
         );
     }
+
+    size_t page = 0;
+    while (page < num_pages) {
+        size_t run_end = page + 1;
+        while (run_end < num_pages && page_prots[run_end] == page_prots[page]) {
+            run_end++;
+        }
+
+        if (page_prots[page] != 0) {
+            uint8_t* addr = base + page * LOADER_PAGE_SIZE;
+            assert((uintptr_t)addr % LOADER_PAGE_SIZE == 0);
+            if (mprotect(addr, (run_end - page) * LOADER_PAGE_SIZE, page_prots[page]) != 0) {
+                perror_exit("mprotect");
+            }
+        }
+
+        page = run_end;
+    }
+
+    free(page_prots);
 }
 
 int load_and_run_image(const uint8_t* file, size_t file_size) {
     assert(file);
+    assert(sysconf(_SC_PAGESIZE) == LOADER_PAGE_SIZE);
 
     if (file_size < sizeof(ImageDosHeader)) {
         pmsg_exit("file too small for DOS header");
@@ -213,16 +244,28 @@ int load_and_run_image(const uint8_t* file, size_t file_size) {
 
     printf("---------------\n");
 
-    size_t image_size = round_up_pow2(nt->optional_header.size_of_image, 0x1000);
+    size_t image_size = round_up_pow2(nt->optional_header.size_of_image, LOADER_PAGE_SIZE);
     size_t headers_size = nt->optional_header.size_of_headers;
     if (headers_size > file_size || headers_size > image_size) {
         pmsg_exit("headers outside of file or image (bad size_of_headers)");
     }
 
-    uint8_t* base =
-        mmap(NULL, image_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (base == MAP_FAILED) {
+    size_t reserve_size = image_size + LOADER_IMAGE_ALIGNMENT - LOADER_PAGE_SIZE;
+    uint8_t* reserve =
+        mmap(NULL, reserve_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (reserve == MAP_FAILED) {
         perror_exit("mmap image");
+    }
+
+    uint8_t* base = (uint8_t*)round_up_pow2((uintptr_t)reserve, LOADER_IMAGE_ALIGNMENT);
+    size_t head_size = (size_t)(base - reserve);
+    size_t tail_size = reserve_size - head_size - image_size;
+    if (head_size != 0 && munmap(reserve, head_size) != 0) {
+        perror_exit("munmap image head");
+    }
+
+    if (tail_size != 0 && munmap(base + image_size, tail_size) != 0) {
+        perror_exit("munmap image tail");
     }
 
     printf("[loader] mapped image at %p (%zu bytes)\n", base, image_size);
