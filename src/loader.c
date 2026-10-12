@@ -199,14 +199,19 @@ static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptiona
 }
 
 static void set_protections(
-    uint8_t* base, const ImageSectionHeader* sections, uint16_t num_sections, size_t image_size
+    uint8_t* base, const ImageSectionHeader* sections, uint16_t num_sections, size_t headers_size,
+    size_t image_size
 ) {
-    assert(base && image_size % LOADER_PAGE_SIZE == 0);
+    assert(base && image_size % LOADER_PAGE_SIZE == 0 && headers_size <= image_size);
 
     size_t num_pages = image_size / LOADER_PAGE_SIZE;
     uint8_t* page_prots = calloc(num_pages, 1);
     if (!page_prots) {
         perror_exit("calloc page protections");
+    }
+
+    for (size_t page = 0; page * LOADER_PAGE_SIZE < headers_size; page++) {
+        page_prots[page] |= PROT_READ;
     }
 
     for (uint16_t idx = 0; idx < num_sections; idx++) {
@@ -221,10 +226,6 @@ static void set_protections(
 
         if (sections[idx].characteristics & 0x80000000u) {
             prot |= PROT_WRITE;
-        }
-
-        if (prot == 0) {
-            prot = PROT_READ;
         }
 
         size_t virtual_size = sections[idx].virtual_size != 0 ? sections[idx].virtual_size
@@ -256,12 +257,10 @@ static void set_protections(
             run_end++;
         }
 
-        if (page_prots[page] != 0) {
-            uint8_t* addr = base + page * LOADER_PAGE_SIZE;
-            assert((uintptr_t)addr % LOADER_PAGE_SIZE == 0);
-            if (mprotect(addr, (run_end - page) * LOADER_PAGE_SIZE, page_prots[page]) != 0) {
-                perror_exit("mprotect");
-            }
+        uint8_t* addr = base + page * LOADER_PAGE_SIZE;
+        assert((uintptr_t)addr % LOADER_PAGE_SIZE == 0);
+        if (mprotect(addr, (run_end - page) * LOADER_PAGE_SIZE, page_prots[page]) != 0) {
+            perror_exit("mprotect");
         }
 
         page = run_end;
@@ -334,7 +333,7 @@ int load_and_run_image(const uint8_t* file, size_t file_size) {
 
     apply_relocations(base, image_size, &nt->optional_header);
     resolve_imports(base, image_size, &nt->optional_header);
-    set_protections(base, sections, nt->file_header.number_of_sections, image_size);
+    set_protections(base, sections, nt->file_header.number_of_sections, headers_size, image_size);
 
     typedef int(__attribute__((ms_abi)) * EntryPoint)(void);
     EntryPoint entry =
