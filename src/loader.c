@@ -3,16 +3,19 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 #include "pe_print.h"
 #include "pe_types.h"
 #include "util.h"
 
-static void apply_relocations(uint8_t* base, const ImageOptionalHeaders64* opt) {
+static void apply_relocations(uint8_t* base, size_t image_size, const ImageOptionalHeaders64* opt) {
     assert(base && opt);
 
     int64_t delta = (int64_t)((uintptr_t)base - opt->image_base);
@@ -22,14 +25,27 @@ static void apply_relocations(uint8_t* base, const ImageOptionalHeaders64* opt) 
         return;
     }
 
-    uint8_t* ptr = rva_offset(base, dir.virtual_address);
+    if (dir.virtual_address % 4 != 0) {
+        pmsg_exit("relocation directory not 4-byte aligned\n");
+    }
+
+    uint8_t* ptr = rva_offset_ranged(base, dir.virtual_address, dir.size, image_size);
     uint8_t* end = ptr + dir.size;
     unsigned long int fixed_entries = 0;
 
     while (ptr < end) {
+        if ((size_t)(end - ptr) < sizeof(ImageBaseRelocation)) {
+            pmsg_exit("truncated image base relocation header");
+        }
+
         ImageBaseRelocation* block = (ImageBaseRelocation*)ptr;
         if (block->size_of_block == 0) {
             break;
+        }
+
+        if (block->size_of_block < sizeof(ImageBaseRelocation) || block->size_of_block % 4 != 0 ||
+            (size_t)(end - ptr) < block->size_of_block) {
+            pmsg_exit("bad base relocation block size");
         }
 
         uint16_t* entries = (uint16_t*)(ptr + sizeof(ImageBaseRelocation));
@@ -42,7 +58,12 @@ static void apply_relocations(uint8_t* base, const ImageOptionalHeaders64* opt) 
                     break;
                 }
                 case IMAGE_REL_BASED_DIR64: {
-                    uint64_t* slot = rva_offset(base, block->virtual_address + offset);
+                    size_t target = (size_t)block->virtual_address + (size_t)offset;
+                    if (target % 8 != 0) {
+                        pmsg_exit("DIR64 relocation target not 8-byte aligned");
+                    }
+
+                    uint64_t* slot = rva_offset_ranged(base, target, 64, image_size);
                     *slot += (uint64_t)delta;
                     fixed_entries++;
                     break;
@@ -58,6 +79,66 @@ static void apply_relocations(uint8_t* base, const ImageOptionalHeaders64* opt) 
     }
 
     printf("[loader] applied %lu relocations, delta=0x%016" PRIx64 "\n", fixed_entries, delta);
+}
+
+static void __attribute__((ms_abi)) write_message(const char* msg, uint64_t len) {
+    ssize_t n = write(1, msg, (size_t)len);
+    (void)n;
+}
+
+static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptionalHeaders64* opt) {
+    assert(base && opt);
+
+    ImageDataDirectory dir = opt->data_directory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (dir.virtual_address == 0) {
+        printf("[loader] no imports\n");
+        return;
+    }
+
+    const ImageImportDescriptor* desc =
+        rva_offset_ranged(base, dir.virtual_address, dir.size, image_size);
+    size_t max_count = dir.size / sizeof(ImageImportDescriptor);
+    for (size_t idx = 0; idx < max_count && desc[idx].name != 0; idx++) {
+        const char* dll_name = rva_cstring(base, desc[idx].name, image_size);
+        printf("DLL name: %s\n", dll_name);
+
+        // Sometime the IAT doubles as the ILT
+        uint32_t ilt_rva =
+            desc[idx].original_first_thunk ? desc[idx].original_first_thunk : desc[idx].first_thunk;
+
+        const void* image_end;
+        u64_align1* ilt = rva_offset(base, ilt_rva, image_size, &image_end);
+        u64_align1* iat = rva_offset(base, desc[idx].first_thunk, image_size, NULL);
+
+        for (; *ilt != 0; ilt++, iat++) {
+            if ((void*)ilt >= image_end || (void*)iat >= image_end) {
+                pmsg_exit("ilt or iat exceeded image size");
+            }
+
+            if (*ilt & 0x8000000000000000ull) {
+                pmsg_exit("unimplemented: import by ordinal\n");
+            } else {
+                size_t rva = *ilt & 0x7FFFFFFF;
+                if (rva % 2 != 0 || rva > image_size || 2 > image_size - rva) {
+                    pmsg_exit("invalid ilt pointer");
+                }
+
+                ImageImportByName* image_import_by_name = rva_offset(base, rva, image_size, NULL);
+                printf(
+                    "hint: %hu, name: %s\n", image_import_by_name->hint, image_import_by_name->name
+                );
+
+                if (strcasecmp(dll_name, "loader.dll") == 0 &&
+                    strcmp(image_import_by_name->name, "write_message") == 0) {
+                    void* fn = write_message;
+                    printf("resolved %s/%s to %p\n", dll_name, image_import_by_name->name, fn);
+                    *iat = (uint64_t)(uintptr_t)fn;
+                } else {
+                    pmsg_exit("unknown fn");
+                }
+            }
+        }
+    }
 }
 
 void map_image(const uint8_t* file, size_t file_size) {
@@ -76,7 +157,7 @@ void map_image(const uint8_t* file, size_t file_size) {
         pmsg_exit("file too small for NT headers (bad lfanew)");
     }
 
-    const ImageNtHeaders64* nt = rva_offset(file, dos->lfanew);
+    const ImageNtHeaders64* nt = offset_ptr(file, dos->lfanew);
     check_nt_headers(nt);
     pe_print_nt_headers_64(nt);
 
@@ -114,10 +195,11 @@ void map_image(const uint8_t* file, size_t file_size) {
         }
 
         memcpy(
-            rva_offset(base, section->virtual_address),
-            rva_offset(file, section->pointer_to_raw_data), section->size_of_raw_data
+            offset_ptr(base, section->virtual_address),
+            offset_ptr(file, section->pointer_to_raw_data), section->size_of_raw_data
         );
     }
 
-    apply_relocations(base, &nt->optional_header);
+    apply_relocations(base, image_size, &nt->optional_header);
+    resolve_imports(base, image_size, &nt->optional_header);
 }

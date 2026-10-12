@@ -83,12 +83,7 @@ typedef struct __attribute__((packed)) {
 
 typedef struct __attribute__((packed)) {
     uint8_t name[8];
-
-    union {
-        uint32_t physical_address;
-        uint32_t virtual_size;
-    } misc;
-
+    uint32_t virtual_size;
     uint32_t virtual_address;
     uint32_t size_of_raw_data;
     uint32_t pointer_to_raw_data;
@@ -112,6 +107,20 @@ typedef struct __attribute__((packed)) {
     uint32_t virtual_address;
     uint32_t size_of_block;
 } ImageBaseRelocation;
+
+typedef struct __attribute__((packed)) {
+    uint32_t original_first_thunk;
+    uint32_t time_date_stamp;
+    uint32_t forwarder_chain;
+    uint32_t name;
+    uint32_t first_thunk;
+} ImageImportDescriptor;
+
+// Check that this is aligned before reading
+typedef struct {
+    uint16_t hint;
+    char name[1];
+} ImageImportByName;
 
 void check_dos_header(const ImageDosHeader* dos);
 void check_nt_headers(const ImageNtHeaders64* nt);

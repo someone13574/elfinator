@@ -33,7 +33,7 @@ nt_header_get_sections(const uint8_t* file, size_t file_size, const ImageNtHeade
     assert(nt);
 
     const uint8_t* opt = (const uint8_t*)&nt->optional_header;
-    const ImageSectionHeader* sections = rva_offset(opt, nt->file_header.size_of_optional_header);
+    const ImageSectionHeader* sections = offset_ptr(opt, nt->file_header.size_of_optional_header);
 
     size_t sections_offset = (const uint8_t*)sections - file;
     size_t sections_size = nt->file_header.number_of_sections * sizeof(ImageSectionHeader);
