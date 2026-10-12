@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 void perror_exit(const char* message) {
     perror(message);
@@ -55,7 +56,7 @@ void* rva_offset_ranged(const uint8_t* base, size_t offset, size_t len, size_t i
     return offset_ptr(base, offset);
 }
 
-const char* rva_cstring(const uint8_t* base, size_t offset, size_t image_size) {
+void check_rva_cstring(const uint8_t* base, size_t offset, size_t image_size) {
     assert(base);
 
     if (offset > image_size) {
@@ -66,5 +67,19 @@ const char* rva_cstring(const uint8_t* base, size_t offset, size_t image_size) {
         exit(1);
     }
 
+    if (!memchr(offset_ptr(base, offset), '\0', image_size - offset)) {
+        fprintf(
+            stdout,
+            "invalid RVA string: string at offset %zu not terminated within image size %zu\n",
+            offset, image_size
+        );
+        exit(1);
+    }
+}
+
+const char* rva_cstring(const uint8_t* base, size_t offset, size_t image_size) {
+    assert(base);
+
+    check_rva_cstring(base, offset, image_size);
     return (const char*)offset_ptr(base, offset);
 }

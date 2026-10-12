@@ -140,16 +140,21 @@ static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptiona
         return;
     }
 
-    const ImageImportDescriptor* desc =
-        rva_offset_ranged(base, dir.virtual_address, dir.size, image_size);
-    size_t max_count = dir.size / sizeof(ImageImportDescriptor);
-    for (size_t idx = 0; idx < max_count && desc[idx].name != 0; idx++) {
-        const char* dll_name = rva_cstring(base, desc[idx].name, image_size);
+    for (size_t desc_offset = 0;; desc_offset += sizeof(ImageImportDescriptor)) {
+        const ImageImportDescriptor* desc = rva_offset_ranged(
+            base, (size_t)dir.virtual_address + desc_offset, sizeof(ImageImportDescriptor),
+            image_size
+        );
+        if (desc->name == 0) {
+            break;
+        }
+
+        const char* dll_name = rva_cstring(base, desc->name, image_size);
         printf("[loader] DLL name: %s\n", dll_name);
 
         // Sometime the IAT doubles as the ILT
         uint32_t ilt_rva =
-            desc[idx].original_first_thunk ? desc[idx].original_first_thunk : desc[idx].first_thunk;
+            desc->original_first_thunk ? desc->original_first_thunk : desc->first_thunk;
 
         for (size_t entry_offset = 0;; entry_offset += sizeof(u64_align1)) {
             u64_align1* ilt = rva_offset_ranged(
@@ -160,7 +165,7 @@ static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptiona
             }
 
             u64_align1* iat = rva_offset_ranged(
-                base, (size_t)desc[idx].first_thunk + entry_offset, sizeof(u64_align1), image_size
+                base, (size_t)desc->first_thunk + entry_offset, sizeof(u64_align1), image_size
             );
 
             if (*ilt & 0x8000000000000000ull) {
@@ -172,6 +177,7 @@ static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptiona
                 }
 
                 ImageImportByName* image_import_by_name = rva_offset(base, rva, image_size, NULL);
+                check_rva_cstring(base, rva + offsetof(ImageImportByName, name), image_size);
                 printf(
                     "[loader] hint: %hu, name: %s\n", image_import_by_name->hint,
                     image_import_by_name->name
