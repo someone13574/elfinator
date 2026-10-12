@@ -27,6 +27,14 @@ void check_nt_headers(const ImageNtHeaders64* nt) {
         pmsg_exit("not an x86-64 image");
     }
 
+    if (!(nt->file_header.characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) {
+        pmsg_exit("not an executable image (IMAGE_FILE_EXECUTABLE_IMAGE not set)");
+    }
+
+    if (nt->file_header.characteristics & IMAGE_FILE_DLL) {
+        pmsg_exit("image is a DLL (need an exe)");
+    }
+
     uint64_t min_optional_size =
         offsetof(ImageOptionalHeaders64, data_directory) +
         (uint64_t)nt->optional_header.number_of_rva_and_sizes * sizeof(ImageDataDirectory);

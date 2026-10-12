@@ -20,6 +20,12 @@ typedef struct __attribute__((packed)) {
 } ImageFileHeader;
 
 enum {
+    IMAGE_FILE_RELOCS_STRIPPED = 0x0001,
+    IMAGE_FILE_EXECUTABLE_IMAGE = 0x0002,
+    IMAGE_FILE_DLL = 0x2000
+};
+
+enum {
     IMAGE_DIRECTORY_ENTRY_EXPORT = 0,
     IMAGE_DIRECTORY_ENTRY_IMPORT = 1,
     IMAGE_DIRECTORY_ENTRY_RESOURCE = 2,

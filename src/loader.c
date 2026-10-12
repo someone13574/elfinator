@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <inttypes.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -80,6 +81,49 @@ static void apply_relocations(uint8_t* base, size_t image_size, const ImageOptio
     }
 
     printf("[loader] applied %lu relocations, delta=0x%016" PRIx64 "\n", fixed_entries, delta);
+}
+
+static uint8_t* map_image(const ImageNtHeaders64* nt, size_t image_size) {
+    assert(nt);
+
+    if (nt->file_header.characteristics & IMAGE_FILE_RELOCS_STRIPPED) {
+        void* addr = (void*)(uintptr_t)nt->optional_header.image_base;
+        printf("[loader] image relocations stripped, requesting preferred base %p\n", addr);
+
+        uint8_t* base = mmap(
+            addr, image_size, PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0
+        );
+        if (base == MAP_FAILED) {
+            perror_exit("mmap image at preferred base");
+        }
+
+        if (base != addr) {
+            pmsg_exit("image relocations stripped and could not be mapped at its preferred base");
+        }
+
+        return base;
+    }
+
+    size_t reserve_size = image_size + LOADER_IMAGE_ALIGNMENT - LOADER_PAGE_SIZE;
+    uint8_t* reserve =
+        mmap(NULL, reserve_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (reserve == MAP_FAILED) {
+        perror_exit("mmap image");
+    }
+
+    uint8_t* base = (uint8_t*)round_up_pow2((uintptr_t)reserve, LOADER_IMAGE_ALIGNMENT);
+    size_t head_size = (size_t)(base - reserve);
+    size_t tail_size = reserve_size - head_size - image_size;
+    if (head_size != 0 && munmap(reserve, head_size) != 0) {
+        perror_exit("munmap image head");
+    }
+
+    if (tail_size != 0 && munmap(base + image_size, tail_size) != 0) {
+        perror_exit("munmap image tail");
+    }
+
+    return base;
 }
 
 static void __attribute__((ms_abi)) write_message(const char* msg, uint64_t len) {
@@ -250,24 +294,7 @@ int load_and_run_image(const uint8_t* file, size_t file_size) {
         pmsg_exit("headers outside of file or image (bad size_of_headers)");
     }
 
-    size_t reserve_size = image_size + LOADER_IMAGE_ALIGNMENT - LOADER_PAGE_SIZE;
-    uint8_t* reserve =
-        mmap(NULL, reserve_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (reserve == MAP_FAILED) {
-        perror_exit("mmap image");
-    }
-
-    uint8_t* base = (uint8_t*)round_up_pow2((uintptr_t)reserve, LOADER_IMAGE_ALIGNMENT);
-    size_t head_size = (size_t)(base - reserve);
-    size_t tail_size = reserve_size - head_size - image_size;
-    if (head_size != 0 && munmap(reserve, head_size) != 0) {
-        perror_exit("munmap image head");
-    }
-
-    if (tail_size != 0 && munmap(base + image_size, tail_size) != 0) {
-        perror_exit("munmap image tail");
-    }
-
+    uint8_t* base = map_image(nt, image_size);
     printf("[loader] mapped image at %p (%zu bytes)\n", base, image_size);
 
     memcpy(base, file, headers_size);
