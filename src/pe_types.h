@@ -3,20 +3,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static const uint16_t dos_header_magic = 0x5a4d;
-static const uint32_t nt_header_pe_signature = 0x00004550;
-static const uint16_t opt_header_magic = 0x020b;
-static const uint32_t nt_header_x8664_machine = 0x8664;
-
-// Packed attribute lowers alignment requirements when accessed through the structure
-// (https://gcc.gnu.org/onlinedocs/gcc/Common-Attributes.html#index-packed)
 typedef struct __attribute__((packed)) {
-    uint16_t magic;       /// `MZ`
-    uint16_t padding[29]; /// ignore
-    int32_t lfanew;       /// Offset to NT headers
+    uint16_t magic;
+    uint16_t padding[29];
+    int32_t lfanew;
 } ImageDosHeader;
-
-void pe_print_dos_header(const ImageDosHeader* header);
 
 typedef struct __attribute__((packed)) {
     uint16_t machine;
@@ -28,9 +19,23 @@ typedef struct __attribute__((packed)) {
     uint16_t characteristics;
 } ImageFileHeader;
 
-void pe_print_file_header(const ImageFileHeader* header);
-
-enum { IMAGE_DIRECTORY_ENTRY_BASERELOC = 5 };
+enum {
+    IMAGE_DIRECTORY_ENTRY_EXPORT = 0,
+    IMAGE_DIRECTORY_ENTRY_IMPORT = 1,
+    IMAGE_DIRECTORY_ENTRY_RESOURCE = 2,
+    IMAGE_DIRECTORY_ENTRY_EXCEPTION = 3,
+    IMAGE_DIRECTORY_ENTRY_SECURITY = 4,
+    IMAGE_DIRECTORY_ENTRY_BASERELOC = 5,
+    IMAGE_DIRECTORY_ENTRY_DEBUG = 6,
+    IMAGE_DIRECTORY_ENTRY_ARCHITECTURE = 7,
+    IMAGE_DIRECTORY_ENTRY_GLOBALPTR = 8,
+    IMAGE_DIRECTORY_ENTRY_TLS = 9,
+    IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG = 10,
+    IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT = 11,
+    IMAGE_DIRECTORY_ENTRY_IAT = 12,
+    IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT = 13,
+    IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR = 14
+};
 
 typedef struct __attribute__((packed)) {
     uint32_t virtual_address;
@@ -70,16 +75,11 @@ typedef struct __attribute__((packed)) {
     ImageDataDirectory data_directory[16];
 } ImageOptionalHeaders64;
 
-void pe_print_optional_headers_64(const ImageOptionalHeaders64* headers);
-
 typedef struct __attribute__((packed)) {
     uint32_t signature;
     ImageFileHeader file_header;
     ImageOptionalHeaders64 optional_header;
 } ImageNtHeaders64;
-
-void check_nt_headers(const ImageNtHeaders64* headers);
-void pe_print_nt_headers_64(const ImageNtHeaders64* headers);
 
 typedef struct __attribute__((packed)) {
     uint8_t name[8];
@@ -113,8 +113,7 @@ typedef struct __attribute__((packed)) {
     uint32_t size_of_block;
 } ImageBaseRelocation;
 
-void* rva_offset(uint8_t* base, size_t offset);
-void map_image(
-    uint8_t* file, size_t file_size, const ImageDosHeader* dos_header,
-    const ImageNtHeaders64* nt_headers
-);
+void check_dos_header(const ImageDosHeader* dos);
+void check_nt_headers(const ImageNtHeaders64* nt);
+const ImageSectionHeader*
+nt_header_get_sections(const uint8_t* file, size_t file_size, const ImageNtHeaders64* nt);

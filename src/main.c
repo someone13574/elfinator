@@ -1,3 +1,4 @@
+#include "loader.h"
 #define _GNU_SOURCE
 
 #include <assert.h>
@@ -7,8 +8,6 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-
-#include "pe.h"
 
 static void perror_exit(const char* message) {
     perror(message);
@@ -55,29 +54,7 @@ int main(int argc, char** argv) {
 
     size_t file_size;
     uint8_t* file = map_file(argv[1], &file_size);
-
-    if (file_size < sizeof(ImageDosHeader)) {
-        pmsg_exit("file too small for DOS header");
-    }
-
-    ImageDosHeader* dos_header = (ImageDosHeader*)file; // safe due to packed attribute
-    if (dos_header->magic != dos_header_magic) {
-        pmsg_exit("not a PE file (incorrect dos magic)");
-    }
-
-    if (dos_header->lfanew < 0 || file_size < sizeof(ImageNtHeaders64) ||
-        (size_t)dos_header->lfanew > file_size - sizeof(ImageNtHeaders64)) {
-        pmsg_exit("file too small for NT headers (bad lfanew)");
-    }
-
-    ImageNtHeaders64* nt_headers = (ImageNtHeaders64*)rva_offset(file, dos_header->lfanew);
-    check_nt_headers(nt_headers);
-
-    pe_print_dos_header(dos_header);
-    pe_print_nt_headers_64(nt_headers);
-
-    printf("---------------\n");
-    map_image(file, file_size, dos_header, nt_headers);
+    map_image(file, file_size);
 
     return 0;
 }
