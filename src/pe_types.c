@@ -26,6 +26,24 @@ void check_nt_headers(const ImageNtHeaders64* nt) {
     if (nt->file_header.machine != 0x8664) {
         pmsg_exit("not an x86-64 image");
     }
+
+    uint64_t min_optional_size =
+        offsetof(ImageOptionalHeaders64, data_directory) +
+        (uint64_t)nt->optional_header.number_of_rva_and_sizes * sizeof(ImageDataDirectory);
+    if (nt->file_header.size_of_optional_header < min_optional_size) {
+        pmsg_exit("optional header too small for its data directories");
+    }
+}
+
+ImageDataDirectory
+optional_header_get_data_directory(const ImageOptionalHeaders64* opt, uint32_t index) {
+    assert(opt && index < 16);
+
+    if (index >= opt->number_of_rva_and_sizes) {
+        return (ImageDataDirectory){0};
+    }
+
+    return opt->data_directory[index];
 }
 
 const ImageSectionHeader*

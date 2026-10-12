@@ -124,5 +124,8 @@ typedef struct {
 
 void check_dos_header(const ImageDosHeader* dos);
 void check_nt_headers(const ImageNtHeaders64* nt);
+
+ImageDataDirectory
+optional_header_get_data_directory(const ImageOptionalHeaders64* opt, uint32_t index);
 const ImageSectionHeader*
 nt_header_get_sections(const uint8_t* file, size_t file_size, const ImageNtHeaders64* nt);

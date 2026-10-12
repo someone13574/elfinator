@@ -19,7 +19,8 @@ static void apply_relocations(uint8_t* base, size_t image_size, const ImageOptio
     assert(base && opt);
 
     int64_t delta = (int64_t)((uintptr_t)base - opt->image_base);
-    ImageDataDirectory dir = opt->data_directory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+    ImageDataDirectory dir =
+        optional_header_get_data_directory(opt, IMAGE_DIRECTORY_ENTRY_BASERELOC);
     if (delta == 0 || dir.virtual_address == 0) {
         printf("[loader] no relocations needed\n");
         return;
@@ -89,7 +90,7 @@ static void __attribute__((ms_abi)) write_message(const char* msg, uint64_t len)
 static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptionalHeaders64* opt) {
     assert(base && opt);
 
-    ImageDataDirectory dir = opt->data_directory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    ImageDataDirectory dir = optional_header_get_data_directory(opt, IMAGE_DIRECTORY_ENTRY_IMPORT);
     if (dir.virtual_address == 0) {
         printf("[loader] no imports\n");
         return;
@@ -187,7 +188,7 @@ static void set_protections(
     }
 }
 
-void load_image(const uint8_t* file, size_t file_size) {
+int load_and_run_image(const uint8_t* file, size_t file_size) {
     assert(file);
 
     if (file_size < sizeof(ImageDosHeader)) {
@@ -198,13 +199,16 @@ void load_image(const uint8_t* file, size_t file_size) {
     check_dos_header(dos);
     pe_print_dos_header(dos);
 
-    if (dos->lfanew < 0 || file_size < sizeof(ImageNtHeaders64) ||
-        (size_t)dos->lfanew > file_size - sizeof(ImageNtHeaders64)) {
+    size_t nt_fixed_size = offsetof(ImageNtHeaders64, optional_header) +
+                           offsetof(ImageOptionalHeaders64, data_directory);
+    if (dos->lfanew < 0 || file_size < nt_fixed_size ||
+        (size_t)dos->lfanew > file_size - nt_fixed_size) {
         pmsg_exit("file too small for NT headers (bad lfanew)");
     }
 
     const ImageNtHeaders64* nt = offset_ptr(file, dos->lfanew);
     check_nt_headers(nt);
+    const ImageSectionHeader* sections = nt_header_get_sections(file, file_size, nt);
     pe_print_nt_headers_64(nt);
 
     printf("---------------\n");
@@ -214,8 +218,6 @@ void load_image(const uint8_t* file, size_t file_size) {
     if (headers_size > file_size || headers_size > image_size) {
         pmsg_exit("headers outside of file or image (bad size_of_headers)");
     }
-
-    const ImageSectionHeader* sections = nt_header_get_sections(file, file_size, nt);
 
     uint8_t* base =
         mmap(NULL, image_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -249,4 +251,12 @@ void load_image(const uint8_t* file, size_t file_size) {
     apply_relocations(base, image_size, &nt->optional_header);
     resolve_imports(base, image_size, &nt->optional_header);
     set_protections(base, sections, nt->file_header.number_of_sections, image_size);
+
+    typedef int(__attribute__((ms_abi)) * EntryPoint)(void);
+    EntryPoint entry =
+        (EntryPoint)rva_offset(base, nt->optional_header.address_of_entry_point, image_size, NULL);
+    printf("[loader] jumping to entry at %p\n\n", (void*)entry);
+    int code = entry();
+    printf("\n[loader] entry returned exit code %d\n", code);
+    return code;
 }
