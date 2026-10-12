@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
 
     size_t file_size;
     uint8_t* file = map_file(argv[1], &file_size);
-    map_image(file, file_size);
+    load_image(file, file_size);
 
     return 0;
 }

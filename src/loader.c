@@ -100,7 +100,7 @@ static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptiona
     size_t max_count = dir.size / sizeof(ImageImportDescriptor);
     for (size_t idx = 0; idx < max_count && desc[idx].name != 0; idx++) {
         const char* dll_name = rva_cstring(base, desc[idx].name, image_size);
-        printf("DLL name: %s\n", dll_name);
+        printf("[loader] DLL name: %s\n", dll_name);
 
         // Sometime the IAT doubles as the ILT
         uint32_t ilt_rva =
@@ -125,13 +125,16 @@ static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptiona
 
                 ImageImportByName* image_import_by_name = rva_offset(base, rva, image_size, NULL);
                 printf(
-                    "hint: %hu, name: %s\n", image_import_by_name->hint, image_import_by_name->name
+                    "[loader] hint: %hu, name: %s\n", image_import_by_name->hint,
+                    image_import_by_name->name
                 );
 
                 if (strcasecmp(dll_name, "loader.dll") == 0 &&
                     strcmp(image_import_by_name->name, "write_message") == 0) {
                     void* fn = write_message;
-                    printf("resolved %s/%s to %p\n", dll_name, image_import_by_name->name, fn);
+                    printf(
+                        "[loader] resolved %s/%s to %p\n", dll_name, image_import_by_name->name, fn
+                    );
                     *iat = (uint64_t)(uintptr_t)fn;
                 } else {
                     pmsg_exit("unknown fn");
@@ -141,7 +144,50 @@ static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptiona
     }
 }
 
-void map_image(const uint8_t* file, size_t file_size) {
+static void set_protections(
+    uint8_t* base, const ImageSectionHeader* sections, uint16_t num_sections, size_t image_size
+) {
+    for (uint16_t idx = 0; idx < num_sections; idx++) {
+        int prot = 0;
+        if (sections[idx].characteristics & 0x20000000u) {
+            prot |= PROT_EXEC;
+        }
+
+        if (sections[idx].characteristics & 0x40000000u) {
+            prot |= PROT_READ;
+        }
+
+        if (sections[idx].characteristics & 0x80000000u) {
+            prot |= PROT_WRITE;
+        }
+
+        if (prot == 0) {
+            prot = PROT_READ;
+        }
+
+        size_t virtual_size = sections[idx].virtual_size > sections[idx].size_of_raw_data
+                                  ? sections[idx].virtual_size
+                                  : sections[idx].size_of_raw_data;
+        size_t size = round_up_pow2(virtual_size, 0x1000);
+        if (size == 0) {
+            continue;
+        }
+
+        void* addr = rva_offset_ranged(base, sections[idx].virtual_address, size, image_size);
+        if (mprotect(addr, size, prot) != 0) {
+            perror_exit("mprotect");
+        }
+
+        char name[9] = {0};
+        memcpy(name, sections[idx].name, 8);
+        fprintf(
+            stderr, "[loader] protect: %-8s %c%c%c\n", name, (prot & PROT_READ) ? 'r' : '-',
+            (prot & PROT_WRITE) ? 'w' : '-', (prot & PROT_EXEC) ? 'x' : '-'
+        );
+    }
+}
+
+void load_image(const uint8_t* file, size_t file_size) {
     assert(file);
 
     if (file_size < sizeof(ImageDosHeader)) {
@@ -202,4 +248,5 @@ void map_image(const uint8_t* file, size_t file_size) {
 
     apply_relocations(base, image_size, &nt->optional_header);
     resolve_imports(base, image_size, &nt->optional_header);
+    set_protections(base, sections, nt->file_header.number_of_sections, image_size);
 }
