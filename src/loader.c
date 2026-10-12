@@ -151,14 +151,17 @@ static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptiona
         uint32_t ilt_rva =
             desc[idx].original_first_thunk ? desc[idx].original_first_thunk : desc[idx].first_thunk;
 
-        const void* image_end;
-        u64_align1* ilt = rva_offset(base, ilt_rva, image_size, &image_end);
-        u64_align1* iat = rva_offset(base, desc[idx].first_thunk, image_size, NULL);
-
-        for (; *ilt != 0; ilt++, iat++) {
-            if ((void*)ilt >= image_end || (void*)iat >= image_end) {
-                pmsg_exit("ilt or iat exceeded image size");
+        for (size_t entry_offset = 0;; entry_offset += sizeof(u64_align1)) {
+            u64_align1* ilt = rva_offset_ranged(
+                base, (size_t)ilt_rva + entry_offset, sizeof(u64_align1), image_size
+            );
+            if (*ilt == 0) {
+                break;
             }
+
+            u64_align1* iat = rva_offset_ranged(
+                base, (size_t)desc[idx].first_thunk + entry_offset, sizeof(u64_align1), image_size
+            );
 
             if (*ilt & 0x8000000000000000ull) {
                 pmsg_exit("unimplemented: import by ordinal\n");
@@ -218,9 +221,8 @@ static void set_protections(
             prot = PROT_READ;
         }
 
-        size_t virtual_size = sections[idx].virtual_size > sections[idx].size_of_raw_data
-                                  ? sections[idx].virtual_size
-                                  : sections[idx].size_of_raw_data;
+        size_t virtual_size = sections[idx].virtual_size != 0 ? sections[idx].virtual_size
+                                                              : sections[idx].size_of_raw_data;
         if (virtual_size == 0) {
             continue;
         }
