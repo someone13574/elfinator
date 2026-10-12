@@ -302,19 +302,24 @@ int load_and_run_image(const uint8_t* file, size_t file_size) {
     for (int idx = 0; idx < nt->file_header.number_of_sections; idx++) {
         const ImageSectionHeader* section = &sections[idx];
 
+        size_t copy_size = section->size_of_raw_data;
+        if (section->virtual_size != 0 && section->virtual_size < copy_size) {
+            copy_size = section->virtual_size;
+        }
+
         if (section->virtual_address > image_size ||
-            section->size_of_raw_data > image_size - section->virtual_address) {
-            pmsg_exit("section outside of image (bad virtual_address or size_of_raw_data)");
+            copy_size > image_size - section->virtual_address) {
+            pmsg_exit("section outside of image (bad virtual_address or section size)");
         }
 
         if (section->pointer_to_raw_data > file_size ||
-            section->size_of_raw_data > file_size - section->pointer_to_raw_data) {
-            pmsg_exit("section outside of file (bad pointer_to_raw_data or size_of_raw_data)");
+            copy_size > file_size - section->pointer_to_raw_data) {
+            pmsg_exit("section outside of file (bad pointer_to_raw_data or section size)");
         }
 
         memcpy(
             offset_ptr(base, section->virtual_address),
-            offset_ptr(file, section->pointer_to_raw_data), section->size_of_raw_data
+            offset_ptr(file, section->pointer_to_raw_data), copy_size
         );
     }
 
