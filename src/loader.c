@@ -286,6 +286,7 @@ int load_and_run_image(const uint8_t* file, size_t file_size) {
     const ImageNtHeaders64* nt = offset_ptr(file, dos->lfanew);
     check_nt_headers(nt);
     const ImageSectionHeader* sections = nt_header_get_sections(file, file_size, nt);
+    check_sections(nt, sections);
     pe_print_nt_headers_64(nt);
 
     printf("---------------\n");

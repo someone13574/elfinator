@@ -35,6 +35,37 @@ void check_nt_headers(const ImageNtHeaders64* nt) {
         pmsg_exit("image is a DLL (need an exe)");
     }
 
+    if (nt->optional_header.address_of_entry_point == 0) {
+        pmsg_exit("image has no entry point");
+    }
+
+    const ImageOptionalHeaders64* opt = &nt->optional_header;
+    if (opt->image_base % 0x10000 != 0) {
+        pmsg_exit("image base not a multiple of 64K");
+    }
+
+    uint32_t file_alignment = opt->file_alignment;
+    if (file_alignment < 0x200 || file_alignment > 0x10000 ||
+        (file_alignment & (file_alignment - 1)) != 0) {
+        pmsg_exit("file alignment not a power of 2 between 512 and 64K");
+    }
+
+    if (opt->section_alignment < file_alignment) {
+        pmsg_exit("section alignment less than file alignment");
+    }
+
+    if (opt->section_alignment < 0x1000 && opt->section_alignment != file_alignment) {
+        pmsg_exit("section alignment below page size must equal file alignment");
+    }
+
+    if (opt->size_of_image % opt->section_alignment != 0) {
+        pmsg_exit("size of image not a multiple of section alignment");
+    }
+
+    if (opt->size_of_headers % file_alignment != 0) {
+        pmsg_exit("size of headers not a multiple of file alignment");
+    }
+
     uint64_t min_optional_size =
         offsetof(ImageOptionalHeaders64, data_directory) +
         (uint64_t)nt->optional_header.number_of_rva_and_sizes * sizeof(ImageDataDirectory);
@@ -67,5 +98,44 @@ nt_header_get_sections(const uint8_t* file, size_t file_size, const ImageNtHeade
         pmsg_exit("file too small for section table");
     }
 
+    if (sections_offset + sections_size > nt->optional_header.size_of_headers) {
+        pmsg_exit("section table extends past size of headers");
+    }
+
     return sections;
+}
+
+void check_sections(const ImageNtHeaders64* nt, const ImageSectionHeader* sections) {
+    assert(nt && sections);
+
+    const ImageOptionalHeaders64* opt = &nt->optional_header;
+    uint64_t alignment = opt->section_alignment;
+    uint64_t next_address = (opt->size_of_headers + alignment - 1) / alignment * alignment;
+    for (uint16_t idx = 0; idx < nt->file_header.number_of_sections; idx++) {
+        uint64_t address = sections[idx].virtual_address;
+        if (address % alignment != 0) {
+            pmsg_exit("section virtual address not a multiple of section alignment");
+        }
+
+        if (idx == 0 && address < next_address) {
+            pmsg_exit("first section overlaps headers");
+        }
+
+        if (idx > 0 && address != next_address) {
+            pmsg_exit("sections not in ascending order and adjacent");
+        }
+
+        if (sections[idx].pointer_to_raw_data % opt->file_alignment != 0 ||
+            sections[idx].size_of_raw_data % opt->file_alignment != 0) {
+            pmsg_exit("section raw data pointer or size not a multiple of file alignment");
+        }
+
+        uint64_t size = sections[idx].virtual_size != 0 ? sections[idx].virtual_size
+                                                        : sections[idx].size_of_raw_data;
+        next_address = address + (size + alignment - 1) / alignment * alignment;
+    }
+
+    if (next_address > opt->size_of_image) {
+        pmsg_exit("sections extend past size of image");
+    }
 }
