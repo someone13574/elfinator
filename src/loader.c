@@ -287,6 +287,12 @@ int load_and_run_image(const uint8_t* file, size_t file_size) {
 
     printf("---------------\n");
 
+    ImageDataDirectory tls_dir =
+        optional_header_get_data_directory(&nt->optional_header, IMAGE_DIRECTORY_ENTRY_TLS);
+    if (tls_dir.virtual_address != 0 || tls_dir.size != 0) {
+        pmsg_exit("unimplemented: tls");
+    }
+
     size_t image_size = round_up_pow2(nt->optional_header.size_of_image, LOADER_PAGE_SIZE);
     size_t headers_size = nt->optional_header.size_of_headers;
     if (headers_size > file_size || headers_size > image_size) {
