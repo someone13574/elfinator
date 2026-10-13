@@ -1,3 +1,9 @@
+#ifdef __i386__
+#define WINAPI __stdcall
+#else
+#define WINAPI
+#endif
+
 __declspec(dllimport) void write_message(const char* msg, unsigned long long len);
 
 static const char attach_msg[] = "with_dll_lib.dll: process attach\n";
@@ -17,7 +23,7 @@ __declspec(dllexport) void print_line(const char* msg) {
     write_message(newline, sizeof(newline) - 1);
 }
 
-int __stdcall DllMain(void* hinst, unsigned int reason, void* reserved) {
+int WINAPI DllMain(void* hinst, unsigned int reason, void* reserved) {
     (void)hinst;
     (void)reserved;
 
