@@ -216,6 +216,16 @@ Module* module_map_insert(ModuleMap* map, Module module) {
     bool is_dll = module.is_builtin || module.image.is_dll;
     assert(!module_map_get(map, module.name, is_dll));
 
+#ifndef NDEBUG
+    if (module.is_builtin) {
+        for (size_t idx = 1; idx < module.builtin.builtin_count; idx++) {
+            assert(
+                strcmp(module.builtin.exports[idx - 1].name, module.builtin.exports[idx].name) < 0
+            );
+        }
+    }
+#endif
+
     Module* allocated = malloc(sizeof(Module));
     if (!allocated) {
         perror_exit("malloc module");
