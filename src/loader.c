@@ -86,28 +86,15 @@ static void apply_relocations(uint8_t* base, size_t image_size, const ImageOptio
 static uint8_t* map_image(const ImageNtHeaders64* nt, size_t image_size) {
     assert(nt);
 
-    if (nt->file_header.characteristics & IMAGE_FILE_RELOCS_STRIPPED) {
-        void* addr = (void*)(uintptr_t)nt->optional_header.image_base;
-        printf("[loader] image relocations stripped, requesting preferred base %p\n", addr);
+    ImageDataDirectory reloc_dir =
+        optional_header_get_data_directory(&nt->optional_header, IMAGE_DIRECTORY_ENTRY_BASERELOC);
+    bool relocatable = !(nt->file_header.characteristics & IMAGE_FILE_RELOCS_STRIPPED) &&
+                       reloc_dir.virtual_address != 0 && reloc_dir.size != 0;
 
-        uint8_t* base = mmap(
-            addr, image_size, PROT_READ | PROT_WRITE,
-            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0
-        );
-        if (base == MAP_FAILED) {
-            perror_exit("mmap image at preferred base");
-        }
-
-        if (base != addr) {
-            pmsg_exit("image relocations stripped and could not be mapped at its preferred base");
-        }
-
-        return base;
-    }
-
+    void* addr = (void*)(uintptr_t)nt->optional_header.image_base;
     size_t reserve_size = image_size + LOADER_IMAGE_ALIGNMENT - LOADER_PAGE_SIZE;
     uint8_t* reserve =
-        mmap(NULL, reserve_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        mmap(addr, reserve_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (reserve == MAP_FAILED) {
         perror_exit("mmap image");
     }
@@ -121,6 +108,10 @@ static uint8_t* map_image(const ImageNtHeaders64* nt, size_t image_size) {
 
     if (tail_size != 0 && munmap(base + image_size, tail_size) != 0) {
         perror_exit("munmap image tail");
+    }
+
+    if (base != addr && !relocatable) {
+        pmsg_exit("image is not relocatable and could not be mapped at its preferred base");
     }
 
     return base;
