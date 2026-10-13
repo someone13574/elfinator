@@ -17,7 +17,7 @@ __declspec(dllexport) void print_line(const char* msg) {
     write_message(newline, sizeof(newline) - 1);
 }
 
-int DllMain(void* hinst, unsigned int reason, void* reserved) {
+int __stdcall DllMain(void* hinst, unsigned int reason, void* reserved) {
     (void)hinst;
     (void)reserved;
 
