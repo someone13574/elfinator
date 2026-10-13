@@ -12,6 +12,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "dll.h"
+#include "module_map.h"
 #include "pe_print.h"
 #include "pe_types.h"
 #include "util.h"
@@ -83,47 +85,10 @@ static void apply_relocations(uint8_t* base, size_t image_size, const ImageOptio
     printf("[loader] applied %lu relocations, delta=0x%016" PRIx64 "\n", fixed_entries, delta);
 }
 
-static uint8_t* map_image(const ImageNtHeaders64* nt, size_t image_size) {
-    assert(nt);
-
-    ImageDataDirectory reloc_dir =
-        optional_header_get_data_directory(&nt->optional_header, IMAGE_DIRECTORY_ENTRY_BASERELOC);
-    bool relocatable = !(nt->file_header.characteristics & IMAGE_FILE_RELOCS_STRIPPED) &&
-                       reloc_dir.virtual_address != 0 && reloc_dir.size != 0;
-
-    void* addr = (void*)(uintptr_t)nt->optional_header.image_base;
-    size_t reserve_size = image_size + LOADER_IMAGE_ALIGNMENT - LOADER_PAGE_SIZE;
-    uint8_t* reserve =
-        mmap(addr, reserve_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (reserve == MAP_FAILED) {
-        perror_exit("mmap image");
-    }
-
-    uint8_t* base = (uint8_t*)round_up_pow2((uintptr_t)reserve, LOADER_IMAGE_ALIGNMENT);
-    size_t head_size = (size_t)(base - reserve);
-    size_t tail_size = reserve_size - head_size - image_size;
-    if (head_size != 0 && munmap(reserve, head_size) != 0) {
-        perror_exit("munmap image head");
-    }
-
-    if (tail_size != 0 && munmap(base + image_size, tail_size) != 0) {
-        perror_exit("munmap image tail");
-    }
-
-    if (base != addr && !relocatable) {
-        pmsg_exit("image is not relocatable and could not be mapped at its preferred base");
-    }
-
-    return base;
-}
-
-static void __attribute__((ms_abi)) write_message(const char* msg, uint64_t len) {
-    ssize_t n = write(1, msg, (size_t)len);
-    (void)n;
-}
-
-static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptionalHeaders64* opt) {
-    assert(base && opt);
+static void resolve_imports(
+    uint8_t* base, size_t image_size, const ImageOptionalHeaders64* opt, ModuleMap* module_map
+) {
+    assert(base && opt && module_map);
 
     ImageDataDirectory dir = optional_header_get_data_directory(opt, IMAGE_DIRECTORY_ENTRY_IMPORT);
     if (dir.virtual_address == 0) {
@@ -142,6 +107,17 @@ static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptiona
 
         const char* dll_name = rva_cstring(base, desc->name, image_size);
         printf("[loader] DLL name: %s\n", dll_name);
+
+        Module* module = module_map_get(module_map, dll_name, true);
+        if (!module) {
+            size_t dll_file_size;
+            const uint8_t* dll_file = get_dll_file(dll_name, &dll_file_size);
+            if (!dll_file) {
+                pmsg_exit("unknown dll file");
+            }
+
+            module = map_image(module_map, dll_name, dll_file, dll_file_size, true);
+        }
 
         // Sometime the IAT doubles as the ILT
         uint32_t ilt_rva =
@@ -174,16 +150,15 @@ static void resolve_imports(uint8_t* base, size_t image_size, const ImageOptiona
                     image_import_by_name->name
                 );
 
-                if (strcasecmp(dll_name, "loader.dll") == 0 &&
-                    strcmp(image_import_by_name->name, "write_message") == 0) {
-                    void* fn = write_message;
-                    printf(
-                        "[loader] resolved %s/%s to %p\n", dll_name, image_import_by_name->name, fn
-                    );
-                    *iat = (uint64_t)(uintptr_t)fn;
-                } else {
-                    pmsg_exit("unknown fn");
+                void* fn = module_get_fn_by_name(
+                    module, image_import_by_name->name, image_import_by_name->hint
+                );
+                if (!fn) {
+                    pmsg_exit("function not resolved");
                 }
+
+                printf("[loader] resolved %s/%s to %p\n", dll_name, image_import_by_name->name, fn);
+                *iat = (uint64_t)(uintptr_t)fn;
             }
         }
     }
@@ -260,10 +235,13 @@ static void set_protections(
     free(page_prots);
 }
 
-int load_and_run_image(const uint8_t* file, size_t file_size) {
-    assert(file);
+Module* map_image(
+    ModuleMap* module_map, const char* name, const uint8_t* file, size_t file_size, _Bool is_dll
+) {
+    assert(module_map && name && file);
     assert(sysconf(_SC_PAGESIZE) == LOADER_PAGE_SIZE);
 
+    // Check headers and sections
     if (file_size < sizeof(ImageDosHeader)) {
         pmsg_exit("file too small for DOS header");
     }
@@ -280,7 +258,7 @@ int load_and_run_image(const uint8_t* file, size_t file_size) {
     }
 
     const ImageNtHeaders64* nt = offset_ptr(file, dos->lfanew);
-    check_nt_headers(nt);
+    check_nt_headers(nt, is_dll);
     const ImageSectionHeader* sections = nt_header_get_sections(file, file_size, nt);
     check_sections(nt, sections);
     pe_print_nt_headers_64(nt);
@@ -299,11 +277,36 @@ int load_and_run_image(const uint8_t* file, size_t file_size) {
         pmsg_exit("headers outside of file or image (bad size_of_headers)");
     }
 
-    uint8_t* base = map_image(nt, image_size);
-    printf("[loader] mapped image at %p (%zu bytes)\n", base, image_size);
+    // Map memory for image
+    void* preferred_base = (void*)(uintptr_t)nt->optional_header.image_base;
+    size_t reserve_size = image_size + LOADER_IMAGE_ALIGNMENT - LOADER_PAGE_SIZE;
+    uint8_t* reserve = mmap(
+        preferred_base, reserve_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0
+    );
+    if (reserve == MAP_FAILED) {
+        perror_exit("mmap image reserve");
+    }
 
+    uint8_t* base = (uint8_t*)round_up_pow2((uintptr_t)reserve, LOADER_IMAGE_ALIGNMENT);
+    size_t reserve_head_size = (size_t)(base - reserve);
+    size_t reserve_tail_size = reserve_size - reserve_head_size - image_size;
+    if (reserve_head_size != 0 && munmap(reserve, reserve_head_size) != 0) {
+        perror_exit("munmap image reserve head");
+    }
+
+    if (reserve_tail_size != 0 && munmap(base + image_size, reserve_tail_size) != 0) {
+        perror_exit("munmap image reserve tail");
+    }
+
+    bool relocatable = !(nt->file_header.characteristics & IMAGE_FILE_RELOCS_STRIPPED);
+    if (base != preferred_base && !relocatable) {
+        pmsg_exit("image is not relocatable and count not be mapped at its preferred address");
+    }
+
+    printf("[loader] mapped image `%s` at %p (%zu bytes)\n", name, base, image_size);
+
+    // Copy data to image
     memcpy(base, file, headers_size);
-
     for (int idx = 0; idx < nt->file_header.number_of_sections; idx++) {
         const ImageSectionHeader* section = &sections[idx];
 
@@ -328,15 +331,95 @@ int load_and_run_image(const uint8_t* file, size_t file_size) {
         );
     }
 
+    // Apply relocations
     apply_relocations(base, image_size, &nt->optional_header);
-    resolve_imports(base, image_size, &nt->optional_header);
-    set_protections(base, sections, nt->file_header.number_of_sections, headers_size, image_size);
 
-    typedef int(__attribute__((ms_abi)) * EntryPoint)(void);
-    EntryPoint entry =
-        (EntryPoint)rva_offset(base, nt->optional_header.address_of_entry_point, image_size, NULL);
-    printf("[loader] jumping to entry at %p\n\n", (void*)entry);
-    int code = entry();
-    printf("\n[loader] entry returned exit code %d\n", code);
-    return code;
+    module_map_insert(
+        module_map, (Module){.name = name,
+                             .is_builtin = false,
+                             .state = MODULE_MAPPED,
+                             .image.is_dll = is_dll,
+                             .image.base = base,
+                             .image.size = image_size,
+                             .image.nt = nt}
+    );
+
+    resolve_imports(base, image_size, &nt->optional_header, module_map);
+    set_protections(base, sections, nt->file_header.number_of_sections, headers_size, image_size);
+    return module_map_get(module_map, name, is_dll);
+}
+
+int start_image(ModuleMap* module_map, Module* module) {
+    assert(module_map && module);
+
+    if (module->is_builtin) {
+        return 0;
+    }
+
+    if (module->state == MODULE_INITIALIZED) {
+        printf("[loader] module %s already initialized\n", module->name);
+        return 0;
+    }
+
+    printf("[loader] starting module %s\n", module->name);
+    module->state = MODULE_INITIALIZED;
+
+    ImageDataDirectory dir = optional_header_get_data_directory(
+        &module->image.nt->optional_header, IMAGE_DIRECTORY_ENTRY_IMPORT
+    );
+    if (dir.virtual_address != 0) {
+        for (size_t desc_offset = 0;; desc_offset += sizeof(ImageImportDescriptor)) {
+            const ImageImportDescriptor* desc = rva_offset_ranged(
+                module->image.base, (size_t)dir.virtual_address + desc_offset,
+                sizeof(ImageImportDescriptor), module->image.size
+            );
+            if (desc->name == 0) {
+                break;
+            }
+
+            const char* dependency_name =
+                rva_cstring(module->image.base, desc->name, module->image.size);
+            Module* dependency = module_map_get(module_map, dependency_name, true);
+            start_image(module_map, dependency);
+        }
+    } else {
+        printf("[loader] no imports\n");
+    }
+
+    uint32_t address_of_entry_point = module->image.nt->optional_header.address_of_entry_point;
+    if (address_of_entry_point != 0) {
+        if (module->image.is_dll) {
+            typedef int(__attribute__((ms_abi)) * DllEntry)(
+                void* hinst, uint32_t reason, void* reserved
+            );
+            DllEntry entry = (DllEntry)rva_offset(
+                module->image.base, address_of_entry_point, module->image.size, NULL
+            );
+            printf("[loader] calling %s:DllMain at %p\n\n", module->name, (void*)entry);
+
+            // Guest code writes to the fd directly, so the log needs to be flushed to stay in order
+            fflush(stdout);
+            int code = entry(module->image.base, 1, NULL);
+            if (code == 0) {
+                pmsg_exit("DllMain failed (returned 0)");
+            }
+
+            printf("\n[loader] started dll %s\n", module->name);
+            return code;
+        } else {
+            typedef int(__attribute__((ms_abi)) * EntryPoint)(void);
+            EntryPoint entry = (EntryPoint)rva_offset(
+                module->image.base, module->image.nt->optional_header.address_of_entry_point,
+                module->image.size, NULL
+            );
+            printf("[loader] jumping to exe entry at %p\n\n", (void*)entry);
+            fflush(stdout);
+            int code = entry();
+            printf("\n[loader] entry returned exit code %d\n", code);
+            return code;
+        }
+    } else {
+        printf("[loader] %s has no entry\n", module->name);
+        return 0;
+    }
 }

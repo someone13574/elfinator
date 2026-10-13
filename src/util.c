@@ -1,9 +1,12 @@
 #include "util.h"
 
 #include <assert.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 
 void perror_exit(const char* message) {
     perror(message);
@@ -15,8 +18,39 @@ void pmsg_exit(const char* message) {
     exit(1);
 }
 
+uint8_t* map_file(const char* path, size_t* size_out) {
+    assert(size_out);
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        perror_exit("open");
+    }
+
+    struct stat st;
+    if (fstat(fd, &st) != 0) {
+        perror_exit("fstat");
+    }
+
+    // mmap rejects zero-length mappings with a confusing EINVAL
+    if (st.st_size == 0) {
+        pmsg_exit("empty file");
+    }
+
+    uint8_t* file = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (file == MAP_FAILED) {
+        perror_exit("mmap file");
+    }
+
+    *size_out = st.st_size;
+    return file;
+}
+
 size_t round_up_pow2(size_t value, size_t align_pow2) {
     return (value + align_pow2 - 1) & ~(align_pow2 - 1);
+}
+
+_Bool is_pow2(size_t value) {
+    return (value & (value - 1)) == 0;
 }
 
 void* offset_ptr(const uint8_t* base, size_t offset) {

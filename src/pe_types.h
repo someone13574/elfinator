@@ -122,14 +122,27 @@ typedef struct __attribute__((packed)) {
     uint32_t first_thunk;
 } ImageImportDescriptor;
 
-// Check that this is aligned before reading
 typedef struct {
     uint16_t hint;
     char name[1];
 } ImageImportByName;
 
+typedef struct __attribute__((packed)) {
+    uint32_t characteristics;
+    uint32_t time_date_stamp;
+    uint16_t major_version;
+    uint16_t minor_version;
+    uint32_t name;
+    uint32_t base;
+    uint32_t number_of_functions;
+    uint32_t number_of_names;
+    uint32_t address_of_functions;
+    uint32_t address_of_names;
+    uint32_t address_of_name_ordinals;
+} ImageExportDirectory;
+
 void check_dos_header(const ImageDosHeader* dos);
-void check_nt_headers(const ImageNtHeaders64* nt);
+void check_nt_headers(const ImageNtHeaders64* nt, _Bool is_dll);
 
 ImageDataDirectory
 optional_header_get_data_directory(const ImageOptionalHeaders64* opt, uint32_t index);

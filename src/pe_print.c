@@ -104,3 +104,22 @@ void pe_print_nt_headers_64(const ImageNtHeaders64* headers) {
     pe_print_file_header(&headers->file_header);
     pe_print_optional_headers_64(&headers->optional_header);
 }
+
+void pe_print_export_directory(const ImageExportDirectory* directory) {
+    assert(directory);
+
+    printf("Export directory:\n");
+    printf("    characteristics:          0x%08" PRIx32 "\n", directory->characteristics);
+    printf("    time_date_stamp:          0x%08" PRIx32 "\n", directory->time_date_stamp);
+    printf(
+        "    version:                  %" PRIu16 ".%" PRIu16 "\n", directory->major_version,
+        directory->minor_version
+    );
+    printf("    name:                     0x%08" PRIx32 "\n", directory->name);
+    printf("    base:                     %" PRIu32 "\n", directory->base);
+    printf("    number_of_functions:      %" PRIu32 "\n", directory->number_of_functions);
+    printf("    number_of_names:          %" PRIu32 "\n", directory->number_of_names);
+    printf("    address_of_functions:     0x%08" PRIx32 "\n", directory->address_of_functions);
+    printf("    address_of_names:         0x%08" PRIx32 "\n", directory->address_of_names);
+    printf("    address_of_name_ordinals: 0x%08" PRIx32 "\n", directory->address_of_name_ordinals);
+}

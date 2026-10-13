@@ -12,7 +12,7 @@ void check_dos_header(const ImageDosHeader* dos) {
     }
 }
 
-void check_nt_headers(const ImageNtHeaders64* nt) {
+void check_nt_headers(const ImageNtHeaders64* nt, _Bool is_dll) {
     assert(nt);
 
     if (nt->signature != 0x00004550) {
@@ -31,11 +31,11 @@ void check_nt_headers(const ImageNtHeaders64* nt) {
         pmsg_exit("not an executable image (IMAGE_FILE_EXECUTABLE_IMAGE not set)");
     }
 
-    if (nt->file_header.characteristics & IMAGE_FILE_DLL) {
-        pmsg_exit("image is a DLL (need an exe)");
+    if ((_Bool)(nt->file_header.characteristics & IMAGE_FILE_DLL) != is_dll) {
+        pmsg_exit("image is not the expected type");
     }
 
-    if (nt->optional_header.address_of_entry_point == 0) {
+    if (nt->optional_header.address_of_entry_point == 0 && !is_dll) {
         pmsg_exit("image has no entry point");
     }
 

@@ -1,49 +1,16 @@
-#include "image.h"
 #define _GNU_SOURCE
-
-#include <assert.h>
-#include <fcntl.h>
-#include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
+#include <string.h>
+#include <unistd.h>
 
-static void perror_exit(const char* message) {
-    perror(message);
-    exit(1);
-}
+#include "image.h"
+#include "module_map.h"
+#include "util.h"
 
-static void pmsg_exit(const char* message) {
-    fprintf(stderr, "%s\n", message);
-    exit(1);
-}
-
-static uint8_t* map_file(const char* path, size_t* size_out) {
-    assert(size_out);
-
-    int fd = open(path, O_RDONLY);
-    if (fd < 0) {
-        perror_exit("open");
-    }
-
-    struct stat st;
-    if (fstat(fd, &st) != 0) {
-        perror_exit("fstat");
-    }
-
-    // mmap rejects zero-length mappings with a confusing EINVAL
-    if (st.st_size == 0) {
-        pmsg_exit("empty file");
-    }
-
-    uint8_t* file = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-    if (file == MAP_FAILED) {
-        perror_exit("mmap file");
-    }
-
-    *size_out = st.st_size;
-    return file;
+static void __attribute__((ms_abi)) write_message(const char* msg, uint64_t len) {
+    ssize_t n = write(1, msg, (size_t)len);
+    (void)n;
 }
 
 int main(int argc, char** argv) {
@@ -54,5 +21,23 @@ int main(int argc, char** argv) {
 
     size_t file_size;
     uint8_t* file = map_file(argv[1], &file_size);
-    return load_and_run_image(file, file_size);
+
+    ModuleMap module_map = module_map_new(8);
+    BuiltinExport builtin_write_message =
+        (BuiltinExport){.name = "write_message", .fn = write_message};
+    module_map_insert(
+        &module_map, (Module){.name = "loader.dll",
+                              .is_builtin = true,
+                              .state = MODULE_INITIALIZED,
+                              .builtin.exports = &builtin_write_message,
+                              .builtin.builtin_count = 1}
+    );
+
+    const char* exe_name = strrchr(argv[1], '/');
+    exe_name = exe_name ? exe_name + 1 : argv[1];
+    Module* root_module = map_image(&module_map, exe_name, file, file_size, false);
+    int code = start_image(&module_map, root_module);
+
+    module_map_free(&module_map);
+    return code;
 }
