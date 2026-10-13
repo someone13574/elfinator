@@ -88,6 +88,44 @@ static void* module_builtin_fn_by_name(Module* module, const char* fn_name, uint
     return module->builtin.exports[idx].fn;
 }
 
+static const ImageExportDirectory* module_get_exports(Module* module, ImageDataDirectory* dir_out) {
+    assert(module && dir_out && !module->is_builtin);
+
+    *dir_out = optional_header_get_data_directory(
+        &module->image.nt->optional_header, IMAGE_DIRECTORY_ENTRY_EXPORT
+    );
+    if (dir_out->virtual_address == 0) {
+        return NULL;
+    }
+
+    return rva_offset_ranged(
+        module->image.base, dir_out->virtual_address, sizeof(ImageExportDirectory),
+        module->image.size
+    );
+}
+
+static void* module_export_fn_at(
+    Module* module, ImageDataDirectory dir, const ImageExportDirectory* exports, uint32_t fn_idx
+) {
+    assert(module && exports && fn_idx < exports->number_of_functions);
+
+    const u32_align1* function_addresses = rva_offset_ranged(
+        module->image.base, exports->address_of_functions,
+        sizeof(u32_align1) * exports->number_of_functions, module->image.size
+    );
+
+    uint32_t function_rva = function_addresses[fn_idx];
+    if (function_rva == 0) {
+        return NULL;
+    }
+
+    if (function_rva >= dir.virtual_address && function_rva - dir.virtual_address < dir.size) {
+        pmsg_exit("unimplemented: forwarders");
+    }
+
+    return rva_offset(module->image.base, function_rva, module->image.size, NULL);
+}
+
 void* module_get_fn_by_name(Module* module, const char* fn_name, uint16_t hint) {
     assert(module && fn_name);
 
@@ -95,16 +133,11 @@ void* module_get_fn_by_name(Module* module, const char* fn_name, uint16_t hint) 
         return module_builtin_fn_by_name(module, fn_name, hint);
     }
 
-    ImageDataDirectory dir = optional_header_get_data_directory(
-        &module->image.nt->optional_header, IMAGE_DIRECTORY_ENTRY_EXPORT
-    );
-    if (dir.virtual_address == 0) {
+    ImageDataDirectory dir;
+    const ImageExportDirectory* exports = module_get_exports(module, &dir);
+    if (!exports) {
         return NULL;
     }
-
-    const ImageExportDirectory* exports = rva_offset_ranged(
-        module->image.base, dir.virtual_address, sizeof(ImageExportDirectory), module->image.size
-    );
 
     const u32_align1* name_addresses = rva_offset_ranged(
         module->image.base, exports->address_of_names,
@@ -113,10 +146,6 @@ void* module_get_fn_by_name(Module* module, const char* fn_name, uint16_t hint) 
     const u16_align1* ordinal_table = rva_offset_ranged(
         module->image.base, exports->address_of_name_ordinals,
         sizeof(u16_align1) * exports->number_of_names, module->image.size
-    );
-    const u32_align1* function_addresses = rva_offset_ranged(
-        module->image.base, exports->address_of_functions,
-        sizeof(u32_align1) * exports->number_of_functions, module->image.size
     );
 
     ExportNames names = {
@@ -131,19 +160,31 @@ void* module_get_fn_by_name(Module* module, const char* fn_name, uint16_t hint) 
         return NULL;
     }
 
-    uint16_t ordinal = ordinal_table[name_idx];
-    if (ordinal >= exports->number_of_functions) {
+    uint16_t fn_idx = ordinal_table[name_idx];
+    if (fn_idx >= exports->number_of_functions) {
         pmsg_exit("ordinal out of range");
     }
 
-    uint32_t function_rva = function_addresses[ordinal];
-    if (function_rva == 0) {
+    return module_export_fn_at(module, dir, exports, fn_idx);
+}
+
+void* module_get_fn_by_ordinal(Module* module, uint16_t ordinal) {
+    assert(module);
+
+    // Builtins only export by name
+    if (module->is_builtin) {
         return NULL;
     }
 
-    if (function_rva >= dir.virtual_address && function_rva - dir.virtual_address < dir.size) {
-        pmsg_exit("unimplemented: forwarders");
+    ImageDataDirectory dir;
+    const ImageExportDirectory* exports = module_get_exports(module, &dir);
+    if (!exports) {
+        return NULL;
     }
 
-    return rva_offset(module->image.base, function_rva, module->image.size, NULL);
+    if (ordinal < exports->base || ordinal - exports->base >= exports->number_of_functions) {
+        return NULL;
+    }
+
+    return module_export_fn_at(module, dir, exports, ordinal - exports->base);
 }

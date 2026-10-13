@@ -136,7 +136,16 @@ static void resolve_imports(
             );
 
             if (*ilt & 0x8000000000000000ull) {
-                pmsg_exit("unimplemented: import by ordinal\n");
+                uint16_t ordinal = *ilt & 0xFFFF;
+                printf("[loader] ordinal: %hu\n", ordinal);
+
+                void* fn = module_get_fn_by_ordinal(module, ordinal);
+                if (!fn) {
+                    pmsg_exit("function not resolved");
+                }
+
+                printf("[loader] resolved %s/#%hu to %p\n", dll_name, ordinal, fn);
+                *iat = (uint64_t)(uintptr_t)fn;
             } else {
                 size_t rva = *ilt & 0x7FFFFFFF;
                 if (rva % 2 != 0 || rva > image_size || 2 > image_size - rva) {
