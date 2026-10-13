@@ -1,4 +1,4 @@
-#include "loader.h"
+#include "image.h"
 
 #include <assert.h>
 #include <inttypes.h>

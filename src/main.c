@@ -1,4 +1,4 @@
-#include "loader.h"
+#include "image.h"
 #define _GNU_SOURCE
 
 #include <assert.h>
