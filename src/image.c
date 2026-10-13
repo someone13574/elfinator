@@ -399,7 +399,7 @@ int start_image(ModuleMap* module_map, Module* module) {
 
             // Guest code writes to the fd directly, so the log needs to be flushed to stay in order
             fflush(stdout);
-            int code = entry(module->image.base, 1, NULL);
+            int code = entry(module->image.base, DLL_PROCESS_ATTACH, NULL);
             if (code == 0) {
                 pmsg_exit("DllMain failed (returned 0)");
             }
@@ -421,5 +421,57 @@ int start_image(ModuleMap* module_map, Module* module) {
     } else {
         printf("[loader] %s has no entry\n", module->name);
         return 0;
+    }
+}
+
+void detach_image(ModuleMap* module_map, Module* module) {
+    assert(module_map && module);
+
+    if (module->is_builtin) {
+        return;
+    }
+
+    if (module->state != MODULE_INITIALIZED) {
+        return;
+    }
+
+    printf("[loader] detaching module %s\n", module->name);
+    module->state = MODULE_MAPPED;
+
+    uint32_t address_of_entry_point = module->image.nt->optional_header.address_of_entry_point;
+    if (module->image.is_dll && address_of_entry_point != 0) {
+        typedef int(__attribute__((ms_abi)) * DllEntry)(
+            void* hinst, uint32_t reason, void* reserved
+        );
+        DllEntry entry = (DllEntry)rva_offset(
+            module->image.base, address_of_entry_point, module->image.size, NULL
+        );
+        printf("[loader] calling %s:DllMain (detach) at %p\n\n", module->name, (void*)entry);
+
+        // Guest code writes to the fd directly, so the log needs to be flushed to stay in order
+        fflush(stdout);
+        entry(module->image.base, DLL_PROCESS_DETACH, NULL);
+
+        printf("\n[loader] detached dll %s\n", module->name);
+    }
+
+    ImageDataDirectory dir = optional_header_get_data_directory(
+        &module->image.nt->optional_header, IMAGE_DIRECTORY_ENTRY_IMPORT
+    );
+    if (dir.virtual_address != 0) {
+        for (size_t desc_offset = 0;; desc_offset += sizeof(ImageImportDescriptor)) {
+            const ImageImportDescriptor* desc = rva_offset_ranged(
+                module->image.base, (size_t)dir.virtual_address + desc_offset,
+                sizeof(ImageImportDescriptor), module->image.size
+            );
+            if (desc->name == 0) {
+                break;
+            }
+
+            const char* dependency_name =
+                rva_cstring(module->image.base, desc->name, module->image.size);
+            Module* dependency = module_map_get(module_map, dependency_name, true);
+            detach_image(module_map, dependency);
+        }
     }
 }

@@ -37,6 +37,7 @@ int main(int argc, char** argv) {
     exe_name = exe_name ? exe_name + 1 : argv[1];
     Module* root_module = map_image(&module_map, exe_name, file, file_size, false);
     int code = start_image(&module_map, root_module);
+    detach_image(&module_map, root_module);
 
     module_map_free(&module_map);
     return code;

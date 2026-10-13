@@ -39,3 +39,4 @@ Module* map_image(
 );
 
 int start_image(ModuleMap* module_map, Module* module);
+void detach_image(ModuleMap* module_map, Module* module);

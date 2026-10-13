@@ -109,6 +109,8 @@ enum {
     IMAGE_REL_BASED_DIR64 = 10
 };
 
+enum { DLL_PROCESS_DETACH = 0, DLL_PROCESS_ATTACH = 1 };
+
 typedef struct __attribute__((packed)) {
     uint32_t virtual_address;
     uint32_t size_of_block;
