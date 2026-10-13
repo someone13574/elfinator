@@ -57,6 +57,40 @@ typedef struct __attribute__((packed)) {
     uint32_t size_of_uninitialized_data;
     uint32_t address_of_entry_point;
     uint32_t base_of_code;
+    uint32_t base_of_data;
+    uint32_t image_base;
+    uint32_t section_alignment;
+    uint32_t file_alignment;
+    uint16_t major_operating_system_version;
+    uint16_t minor_operating_system_version;
+    uint16_t major_image_version;
+    uint16_t minor_image_version;
+    uint16_t major_subsystem_version;
+    uint16_t minor_subsystem_version;
+    uint32_t win32_version_value;
+    uint32_t size_of_image;
+    uint32_t size_of_headers;
+    uint32_t check_sum;
+    uint16_t subsystem;
+    uint16_t dll_characteristics;
+    uint32_t size_of_stack_reserve;
+    uint32_t size_of_stack_commit;
+    uint32_t size_of_heap_reserve;
+    uint32_t size_of_heap_commit;
+    uint32_t loader_flags;
+    uint32_t number_of_rva_and_sizes;
+    ImageDataDirectory data_directory[16];
+} ImageOptionalHeaders32;
+
+typedef struct __attribute__((packed)) {
+    uint16_t magic;
+    uint8_t major_linker_version;
+    uint8_t minor_linker_version;
+    uint32_t size_of_code;
+    uint32_t size_of_initialized_data;
+    uint32_t size_of_uninitialized_data;
+    uint32_t address_of_entry_point;
+    uint32_t base_of_code;
     uint64_t image_base;
     uint32_t section_alignment;
     uint32_t file_alignment;
@@ -84,8 +118,14 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
     uint32_t signature;
     ImageFileHeader file_header;
-    ImageOptionalHeaders64 optional_header;
-} ImageNtHeaders64;
+
+    union {
+        ImageOptionalHeaders32 u32;
+        ImageOptionalHeaders64 u64;
+    };
+
+    _Bool is_64bit;
+} ImageNtHeaders;
 
 typedef struct __attribute__((packed)) {
     uint8_t name[8];
@@ -144,10 +184,11 @@ typedef struct __attribute__((packed)) {
 } ImageExportDirectory;
 
 void check_dos_header(const ImageDosHeader* dos);
-void check_nt_headers(const ImageNtHeaders64* nt, _Bool is_dll);
+void check_nt_headers(const ImageNtHeaders* nt, _Bool is_dll);
+size_t nt_get_fixed_size(_Bool is_64bit);
 
-ImageDataDirectory
-optional_header_get_data_directory(const ImageOptionalHeaders64* opt, uint32_t index);
-const ImageSectionHeader*
-nt_header_get_sections(const uint8_t* file, size_t file_size, const ImageNtHeaders64* nt);
-void check_sections(const ImageNtHeaders64* nt, const ImageSectionHeader* sections);
+ImageDataDirectory nt_get_data_directory(const ImageNtHeaders* nt, uint32_t index);
+const ImageSectionHeader* nt_header_get_sections(
+    const uint8_t* file, size_t file_size, size_t nt_offset, const ImageNtHeaders* nt
+);
+void check_sections(const ImageNtHeaders* nt, const ImageSectionHeader* sections);

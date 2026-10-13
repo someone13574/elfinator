@@ -15,6 +15,8 @@ uint8_t* get_dll_file(const char* name, size_t* file_size_out) {
 
     if (strcmp("with_dll_lib.dll", name) == 0) {
         return map_file("build/with_dll_lib.dll", file_size_out);
+    } else if (strcmp("with_dll_lib32.dll", name) == 0) {
+        return map_file("build/with_dll_lib32.dll", file_size_out);
     } else {
         fprintf(stderr, "unknown dll `%s`\n", name);
     }
@@ -91,9 +93,7 @@ static void* module_builtin_fn_by_name(Module* module, const char* fn_name, uint
 static const ImageExportDirectory* module_get_exports(Module* module, ImageDataDirectory* dir_out) {
     assert(module && dir_out && !module->is_builtin);
 
-    *dir_out = optional_header_get_data_directory(
-        &module->image.nt->optional_header, IMAGE_DIRECTORY_ENTRY_EXPORT
-    );
+    *dir_out = nt_get_data_directory(&module->image.nt, IMAGE_DIRECTORY_ENTRY_EXPORT);
     if (dir_out->virtual_address == 0) {
         return NULL;
     }

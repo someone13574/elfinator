@@ -1,6 +1,8 @@
 #include "pe_types.h"
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdio.h>
 
 #include "util.h"
 
@@ -12,19 +14,29 @@ void check_dos_header(const ImageDosHeader* dos) {
     }
 }
 
-void check_nt_headers(const ImageNtHeaders64* nt, _Bool is_dll) {
+void check_nt_headers(const ImageNtHeaders* nt, _Bool is_dll) {
     assert(nt);
 
     if (nt->signature != 0x00004550) {
         pmsg_exit("bad NT PE signature");
     }
 
-    if (nt->optional_header.magic != 0x020b) {
-        pmsg_exit("not PE32+ (need 64-bit exe)");
-    }
+    if (nt->is_64bit) {
+        if (nt->u64.magic != 0x020b) {
+            pmsg_exit("not PE32+ (expected 64-bit image)");
+        }
 
-    if (nt->file_header.machine != 0x8664) {
-        pmsg_exit("not an x86-64 image");
+        if (nt->file_header.machine != 0x8664) {
+            pmsg_exit("not an x86-64 image");
+        }
+    } else {
+        if (nt->u32.magic != 0x010b) {
+            pmsg_exit("not PE32 (expected 32-bit image)");
+        }
+
+        if (nt->file_header.machine != 0x8664 && nt->file_header.machine != 0x014c) {
+            pmsg_exit("not an x86-64 or i386 (or later) image");
+        }
     }
 
     if (!(nt->file_header.characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) {
@@ -35,82 +47,108 @@ void check_nt_headers(const ImageNtHeaders64* nt, _Bool is_dll) {
         pmsg_exit("image is not the expected type");
     }
 
-    if (nt->optional_header.address_of_entry_point == 0 && !is_dll) {
+    uint32_t address_of_entry_point =
+        nt->is_64bit ? nt->u64.address_of_entry_point : nt->u32.address_of_entry_point;
+    if (address_of_entry_point == 0 && !is_dll) {
         pmsg_exit("image has no entry point");
     }
 
-    const ImageOptionalHeaders64* opt = &nt->optional_header;
-    if (opt->image_base % 0x10000 != 0) {
+    uint64_t image_base = nt->is_64bit ? nt->u64.image_base : nt->u32.image_base;
+    if (image_base % 0x10000 != 0) {
         pmsg_exit("image base not a multiple of 64K");
     }
 
-    uint32_t file_alignment = opt->file_alignment;
+    uint32_t file_alignment = nt->is_64bit ? nt->u64.file_alignment : nt->u32.file_alignment;
     if (file_alignment < 0x200 || file_alignment > 0x10000 ||
         (file_alignment & (file_alignment - 1)) != 0) {
         pmsg_exit("file alignment not a power of 2 between 512 and 64K");
     }
 
-    if (opt->section_alignment < file_alignment) {
+    uint32_t section_alignment =
+        nt->is_64bit ? nt->u64.section_alignment : nt->u32.section_alignment;
+    if (section_alignment < file_alignment) {
         pmsg_exit("section alignment less than file alignment");
     }
 
-    if (opt->section_alignment < 0x1000 && opt->section_alignment != file_alignment) {
+    if (section_alignment < 0x1000 && section_alignment != file_alignment) {
         pmsg_exit("section alignment below page size must equal file alignment");
     }
 
-    if (opt->size_of_image % opt->section_alignment != 0) {
+    uint32_t size_of_image = nt->is_64bit ? nt->u64.size_of_image : nt->u32.size_of_image;
+    if (size_of_image % section_alignment != 0) {
         pmsg_exit("size of image not a multiple of section alignment");
     }
 
-    if (opt->size_of_headers % file_alignment != 0) {
+    uint32_t size_of_headers = nt->is_64bit ? nt->u64.size_of_headers : nt->u32.size_of_headers;
+    if (size_of_headers % file_alignment != 0) {
         pmsg_exit("size of headers not a multiple of file alignment");
     }
 
-    uint64_t min_optional_size =
-        offsetof(ImageOptionalHeaders64, data_directory) +
-        (uint64_t)nt->optional_header.number_of_rva_and_sizes * sizeof(ImageDataDirectory);
+    uint64_t number_of_rva_and_sizes =
+        nt->is_64bit ? nt->u64.number_of_rva_and_sizes : nt->u32.number_of_rva_and_sizes;
+    uint64_t min_optional_size = (nt->is_64bit ? offsetof(ImageOptionalHeaders64, data_directory)
+                                               : offsetof(ImageOptionalHeaders32, data_directory)) +
+                                 number_of_rva_and_sizes * sizeof(ImageDataDirectory);
     if (nt->file_header.size_of_optional_header < min_optional_size) {
         pmsg_exit("optional header too small for its data directories");
     }
 }
 
-ImageDataDirectory
-optional_header_get_data_directory(const ImageOptionalHeaders64* opt, uint32_t index) {
-    assert(opt && index < 16);
-
-    if (index >= opt->number_of_rva_and_sizes) {
-        return (ImageDataDirectory){0};
+size_t nt_get_fixed_size(_Bool is_64bit) {
+    if (is_64bit) {
+        return offsetof(ImageNtHeaders, u64) + offsetof(ImageOptionalHeaders64, data_directory);
+    } else {
+        return offsetof(ImageNtHeaders, u32) + offsetof(ImageOptionalHeaders32, data_directory);
     }
-
-    return opt->data_directory[index];
 }
 
-const ImageSectionHeader*
-nt_header_get_sections(const uint8_t* file, size_t file_size, const ImageNtHeaders64* nt) {
-    assert(nt);
+ImageDataDirectory nt_get_data_directory(const ImageNtHeaders* nt, uint32_t index) {
+    assert(nt && index < 16);
 
-    const uint8_t* opt = (const uint8_t*)&nt->optional_header;
-    const ImageSectionHeader* sections = offset_ptr(opt, nt->file_header.size_of_optional_header);
+    if (nt->is_64bit) {
+        if (index >= nt->u64.number_of_rva_and_sizes) {
+            return (ImageDataDirectory){0};
+        }
 
-    size_t sections_offset = (const uint8_t*)sections - file;
+        return nt->u64.data_directory[index];
+    } else {
+        if (index >= nt->u32.number_of_rva_and_sizes) {
+            return (ImageDataDirectory){0};
+        }
+
+        return nt->u32.data_directory[index];
+    }
+}
+
+const ImageSectionHeader* nt_header_get_sections(
+    const uint8_t* file, size_t file_size, size_t nt_offset, const ImageNtHeaders* nt
+) {
+    assert(file && nt);
+
+    size_t sections_offset =
+        nt_offset + offsetof(ImageNtHeaders, u64) + nt->file_header.size_of_optional_header;
     size_t sections_size = nt->file_header.number_of_sections * sizeof(ImageSectionHeader);
     if (sections_offset > file_size || sections_size > file_size - sections_offset) {
         pmsg_exit("file too small for section table");
     }
 
-    if (sections_offset + sections_size > nt->optional_header.size_of_headers) {
+    uint32_t size_of_headers = nt->is_64bit ? nt->u64.size_of_headers : nt->u32.size_of_headers;
+    if (sections_offset + sections_size > size_of_headers) {
         pmsg_exit("section table extends past size of headers");
     }
 
-    return sections;
+    return offset_ptr(file, sections_offset);
 }
 
-void check_sections(const ImageNtHeaders64* nt, const ImageSectionHeader* sections) {
+void check_sections(const ImageNtHeaders* nt, const ImageSectionHeader* sections) {
     assert(nt && sections);
 
-    const ImageOptionalHeaders64* opt = &nt->optional_header;
-    uint64_t alignment = opt->section_alignment;
-    uint64_t next_address = (opt->size_of_headers + alignment - 1) / alignment * alignment;
+    uint64_t alignment = nt->is_64bit ? nt->u64.section_alignment : nt->u32.section_alignment;
+    uint32_t file_alignment = nt->is_64bit ? nt->u64.file_alignment : nt->u32.file_alignment;
+    uint32_t size_of_headers = nt->is_64bit ? nt->u64.size_of_headers : nt->u32.size_of_headers;
+    uint32_t size_of_image = nt->is_64bit ? nt->u64.size_of_image : nt->u32.size_of_image;
+    uint64_t next_address = (size_of_headers + alignment - 1) / alignment * alignment;
+
     for (uint16_t idx = 0; idx < nt->file_header.number_of_sections; idx++) {
         uint64_t address = sections[idx].virtual_address;
         if (address % alignment != 0) {
@@ -125,8 +163,8 @@ void check_sections(const ImageNtHeaders64* nt, const ImageSectionHeader* sectio
             pmsg_exit("sections not in ascending order and adjacent");
         }
 
-        if (sections[idx].pointer_to_raw_data % opt->file_alignment != 0 ||
-            sections[idx].size_of_raw_data % opt->file_alignment != 0) {
+        if (sections[idx].pointer_to_raw_data % file_alignment != 0 ||
+            sections[idx].size_of_raw_data % file_alignment != 0) {
             pmsg_exit("section raw data pointer or size not a multiple of file alignment");
         }
 
@@ -135,7 +173,7 @@ void check_sections(const ImageNtHeaders64* nt, const ImageSectionHeader* sectio
         next_address = address + (size + alignment - 1) / alignment * alignment;
     }
 
-    if (next_address > opt->size_of_image) {
+    if (next_address > size_of_image) {
         pmsg_exit("sections extend past size of image");
     }
 }

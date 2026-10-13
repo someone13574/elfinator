@@ -35,7 +35,8 @@ int main(int argc, char** argv) {
 
     const char* exe_name = strrchr(argv[1], '/');
     exe_name = exe_name ? exe_name + 1 : argv[1];
-    Module* root_module = map_image(&module_map, exe_name, file, file_size, false);
+
+    Module* root_module = map_image(&module_map, exe_name, file, file_size, false, IMAGE_ARCH);
     int code = start_image(&module_map, root_module);
     detach_image(&module_map, root_module);
 

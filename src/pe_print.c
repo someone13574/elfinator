@@ -31,6 +31,72 @@ const char* const image_data_directory_names[16] = {
     "iat",    "delay_import", "com_descriptor", "reserved",
 };
 
+void pe_print_optional_headers_32(const ImageOptionalHeaders32* headers) {
+    assert(headers);
+
+    printf("Optional headers:\n");
+    printf("    magic:                          0x%04" PRIx16 "\n", headers->magic);
+    printf(
+        "    linker_version:                 %" PRIu8 ".%" PRIu8 "\n",
+        headers->major_linker_version, headers->minor_linker_version
+    );
+    printf("    size_of_code:                   0x%08" PRIx32 "\n", headers->size_of_code);
+    printf(
+        "    size_of_initialized_data:       0x%08" PRIx32 "\n", headers->size_of_initialized_data
+    );
+    printf(
+        "    size_of_uninitialized_data:     0x%08" PRIx32 "\n", headers->size_of_uninitialized_data
+    );
+    printf(
+        "    address_of_entry_point:         0x%08" PRIx32 "\n", headers->address_of_entry_point
+    );
+    printf("    base_of_code:                   0x%08" PRIx32 "\n", headers->base_of_code);
+    printf("    base_of_data:                   0x%08" PRIx32 "\n", headers->base_of_data);
+    printf("    image_base:                     0x%016" PRIx32 "\n", headers->image_base);
+    printf("    section_alignment:              0x%08" PRIx32 "\n", headers->section_alignment);
+    printf("    file_alignment:                 0x%08" PRIx32 "\n", headers->file_alignment);
+    printf(
+        "    operating_system_version:       %" PRIu16 ".%" PRIu16 "\n",
+        headers->major_operating_system_version, headers->minor_operating_system_version
+    );
+    printf(
+        "    image_version:                  %" PRIu16 ".%" PRIu16 "\n",
+        headers->major_image_version, headers->minor_image_version
+    );
+    printf(
+        "    subsystem_version:              %" PRIu16 ".%" PRIu16 "\n",
+        headers->major_subsystem_version, headers->minor_subsystem_version
+    );
+    printf("    win32_version_value:            %" PRIu32 "\n", headers->win32_version_value);
+    printf("    size_of_image:                  0x%08" PRIx32 "\n", headers->size_of_image);
+    printf("    size_of_headers:                0x%08" PRIx32 "\n", headers->size_of_headers);
+    printf("    check_sum:                      0x%08" PRIx32 "\n", headers->check_sum);
+    printf("    subsystem:                      %" PRIu16 "\n", headers->subsystem);
+    printf("    dll_characteristics:            0x%04" PRIx16 "\n", headers->dll_characteristics);
+    printf(
+        "    size_of_stack_reserve:          0x%016" PRIx32 "\n", headers->size_of_stack_reserve
+    );
+    printf("    size_of_stack_commit:           0x%016" PRIx32 "\n", headers->size_of_stack_commit);
+    printf("    size_of_heap_reserve:           0x%016" PRIx32 "\n", headers->size_of_heap_reserve);
+    printf("    size_of_heap_commit:            0x%016" PRIx32 "\n", headers->size_of_heap_commit);
+    printf("    loader_flags:                   0x%08" PRIx32 "\n", headers->loader_flags);
+    printf("    number_of_rva_and_sizes:        %" PRIu32 "\n", headers->number_of_rva_and_sizes);
+
+    uint32_t count = headers->number_of_rva_and_sizes;
+    if (count > 16) {
+        count = 16;
+    }
+
+    printf("    data directories:\n");
+    for (uint32_t idx = 0; idx < count; idx++) {
+        const ImageDataDirectory* dir = &headers->data_directory[idx];
+        printf(
+            "        %-14s rva: 0x%08" PRIx32 ", size: 0x%08" PRIx32 "\n",
+            image_data_directory_names[idx], dir->virtual_address, dir->size
+        );
+    }
+}
+
 void pe_print_optional_headers_64(const ImageOptionalHeaders64* headers) {
     assert(headers);
 
@@ -96,13 +162,24 @@ void pe_print_optional_headers_64(const ImageOptionalHeaders64* headers) {
     }
 }
 
-void pe_print_nt_headers_64(const ImageNtHeaders64* headers) {
+void pe_print_nt_headers(const ImageNtHeaders* headers) {
     assert(headers);
 
-    printf("NT headers:\n");
+    printf("NT headers");
+    if (headers->is_64bit) {
+        printf(" (64-bit):\n");
+    } else {
+        printf(" (32-bit):\n");
+    }
+
     printf("    signature: 0x%08" PRIx32 "\n", headers->signature);
     pe_print_file_header(&headers->file_header);
-    pe_print_optional_headers_64(&headers->optional_header);
+
+    if (headers->is_64bit) {
+        pe_print_optional_headers_64(&headers->u64);
+    } else {
+        pe_print_optional_headers_32(&headers->u32);
+    }
 }
 
 void pe_print_export_directory(const ImageExportDirectory* directory) {

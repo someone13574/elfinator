@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 mkdir -p build
-gcc -std=c11 -Wall -Wextra -g -o build/elfinator src/*.c
+gcc -std=c11 -Wall -Wextra -g -DIMAGE_ARCH=IMAGE_ARCH_PE_PLUS -o build/elfinator src/*.c
+gcc -m32 -std=c11 -Wall -Wextra -g -fno-pie -no-pie -DIMAGE_ARCH=IMAGE_ARCH_PE -o build/elfinator32 src/*.c
 
 x86_64-w64-mingw32-dlltool -d examples/freestanding_loader.def -l build/libloader.a
 x86_64-w64-mingw32-gcc \

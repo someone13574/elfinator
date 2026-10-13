@@ -21,12 +21,18 @@
 #define LOADER_PAGE_SIZE 0x1000
 #define LOADER_IMAGE_ALIGNMENT 0x10000
 
-static void apply_relocations(uint8_t* base, size_t image_size, const ImageOptionalHeaders64* opt) {
-    assert(base && opt);
+#ifdef __i386__
+#define WINAPI __attribute__((stdcall))
+#else
+#define WINAPI __attribute__((ms_abi))
+#endif
 
-    int64_t delta = (int64_t)((uintptr_t)base - opt->image_base);
-    ImageDataDirectory dir =
-        optional_header_get_data_directory(opt, IMAGE_DIRECTORY_ENTRY_BASERELOC);
+static void apply_relocations(uint8_t* base, size_t image_size, const ImageNtHeaders* nt) {
+    assert(base && nt);
+
+    size_t image_base = nt->is_64bit ? nt->u64.image_base : nt->u32.image_base;
+    int64_t delta = (int64_t)((uintptr_t)base - image_base);
+    ImageDataDirectory dir = nt_get_data_directory(nt, IMAGE_DIRECTORY_ENTRY_BASERELOC);
     if (delta == 0 || dir.virtual_address == 0) {
         printf("[loader] no relocations needed\n");
         return;
@@ -72,6 +78,14 @@ static void apply_relocations(uint8_t* base, size_t image_size, const ImageOptio
                     fixed_entries++;
                     break;
                 }
+                case IMAGE_REL_BASED_HIGHLOW: {
+                    size_t target = (size_t)block->virtual_address + (size_t)offset;
+                    u32_align1* slot =
+                        rva_offset_ranged(base, target, sizeof(u32_align1), image_size);
+                    *slot += (uint32_t)delta;
+                    fixed_entries++;
+                    break;
+                }
                 default: {
                     fprintf(stderr, "unimplemented base relocation entry type %d\n", type);
                     exit(1);
@@ -86,11 +100,12 @@ static void apply_relocations(uint8_t* base, size_t image_size, const ImageOptio
 }
 
 static void resolve_imports(
-    uint8_t* base, size_t image_size, const ImageOptionalHeaders64* opt, ModuleMap* module_map
+    uint8_t* base, size_t image_size, const ImageNtHeaders* nt, ModuleMap* module_map,
+    ImageArch image_arch
 ) {
-    assert(base && opt && module_map);
+    assert(base && nt && module_map);
 
-    ImageDataDirectory dir = optional_header_get_data_directory(opt, IMAGE_DIRECTORY_ENTRY_IMPORT);
+    ImageDataDirectory dir = nt_get_data_directory(nt, IMAGE_DIRECTORY_ENTRY_IMPORT);
     if (dir.virtual_address == 0) {
         printf("[loader] no imports\n");
         return;
@@ -116,38 +131,41 @@ static void resolve_imports(
                 pmsg_exit("unknown dll file");
             }
 
-            module = map_image(module_map, dll_name, dll_file, dll_file_size, true);
+            module = map_image(module_map, dll_name, dll_file, dll_file_size, true, image_arch);
         }
 
         // Sometime the IAT doubles as the ILT
         uint32_t ilt_rva =
             desc->original_first_thunk ? desc->original_first_thunk : desc->first_thunk;
 
-        for (size_t entry_offset = 0;; entry_offset += sizeof(u64_align1)) {
-            u64_align1* ilt = rva_offset_ranged(
-                base, (size_t)ilt_rva + entry_offset, sizeof(u64_align1), image_size
-            );
-            if (*ilt == 0) {
+        size_t entry_size = nt->is_64bit ? sizeof(u64_align1) : sizeof(u32_align1);
+        uint64_t ordinal_flag = nt->is_64bit ? 0x8000000000000000ull : 0x80000000ull;
+
+        for (size_t entry_offset = 0;; entry_offset += entry_size) {
+            void* ilt_ptr =
+                rva_offset_ranged(base, (size_t)ilt_rva + entry_offset, entry_size, image_size);
+            uint64_t ilt = nt->is_64bit ? *(u64_align1*)ilt_ptr : *(u32_align1*)ilt_ptr;
+            if (ilt == 0) {
                 break;
             }
 
-            u64_align1* iat = rva_offset_ranged(
-                base, (size_t)desc->first_thunk + entry_offset, sizeof(u64_align1), image_size
+            void* iat = rva_offset_ranged(
+                base, (size_t)desc->first_thunk + entry_offset, entry_size, image_size
             );
 
-            if (*ilt & 0x8000000000000000ull) {
-                uint16_t ordinal = *ilt & 0xFFFF;
+            void* fn;
+            if (ilt & ordinal_flag) {
+                uint16_t ordinal = ilt & 0xFFFF;
                 printf("[loader] ordinal: %hu\n", ordinal);
 
-                void* fn = module_get_fn_by_ordinal(module, ordinal);
+                fn = module_get_fn_by_ordinal(module, ordinal);
                 if (!fn) {
                     pmsg_exit("function not resolved");
                 }
 
                 printf("[loader] resolved %s/#%hu to %p\n", dll_name, ordinal, fn);
-                *iat = (uint64_t)(uintptr_t)fn;
             } else {
-                size_t rva = *ilt & 0x7FFFFFFF;
+                size_t rva = ilt & 0x7FFFFFFF;
                 if (rva % 2 != 0 || rva > image_size || 2 > image_size - rva) {
                     pmsg_exit("invalid ilt pointer");
                 }
@@ -159,7 +177,7 @@ static void resolve_imports(
                     image_import_by_name->name
                 );
 
-                void* fn = module_get_fn_by_name(
+                fn = module_get_fn_by_name(
                     module, image_import_by_name->name, image_import_by_name->hint
                 );
                 if (!fn) {
@@ -167,7 +185,16 @@ static void resolve_imports(
                 }
 
                 printf("[loader] resolved %s/%s to %p\n", dll_name, image_import_by_name->name, fn);
-                *iat = (uint64_t)(uintptr_t)fn;
+            }
+
+            if (nt->is_64bit) {
+                *(u64_align1*)iat = (uint64_t)(uintptr_t)fn;
+            } else {
+                if ((uintptr_t)fn > UINT32_MAX) {
+                    pmsg_exit("resolved function address does not fit in 32-bit IAT entry");
+                }
+
+                *(u32_align1*)iat = (uint32_t)(uintptr_t)fn;
             }
         }
     }
@@ -245,7 +272,8 @@ static void set_protections(
 }
 
 Module* map_image(
-    ModuleMap* module_map, const char* name, const uint8_t* file, size_t file_size, _Bool is_dll
+    ModuleMap* module_map, const char* name, const uint8_t* file, size_t file_size, _Bool is_dll,
+    ImageArch image_arch
 ) {
     assert(module_map && name && file);
     assert(sysconf(_SC_PAGESIZE) == LOADER_PAGE_SIZE);
@@ -259,38 +287,70 @@ Module* map_image(
     check_dos_header(dos);
     pe_print_dos_header(dos);
 
-    size_t nt_fixed_size = offsetof(ImageNtHeaders64, optional_header) +
-                           offsetof(ImageOptionalHeaders64, data_directory);
+    size_t magic_offset = offsetof(ImageNtHeaders, u64.magic);
+    if (dos->lfanew < 0 || file_size < magic_offset + sizeof(u16_align1) ||
+        (size_t)dos->lfanew > file_size - magic_offset - sizeof(u16_align1)) {
+        pmsg_exit("file too small for NT magic (bad lfanew)");
+    }
+
+    const u16_align1* magic = offset_ptr(file, dos->lfanew + magic_offset);
+    ImageNtHeaders nt = {.is_64bit = *magic == 0x20b};
+    switch (image_arch) {
+        case IMAGE_ARCH_EITHER: {
+            break;
+        }
+        case IMAGE_ARCH_PE: {
+            if (nt.is_64bit) {
+                pmsg_exit("image is PE+ (expected 32-bit)");
+            }
+            break;
+        }
+        case IMAGE_ARCH_PE_PLUS: {
+            if (!nt.is_64bit) {
+                pmsg_exit("image is PE (expected 64-bit)");
+            }
+            break;
+        }
+    }
+
+    size_t nt_fixed_size = nt_get_fixed_size(nt.is_64bit);
     if (dos->lfanew < 0 || file_size < nt_fixed_size ||
         (size_t)dos->lfanew > file_size - nt_fixed_size) {
         pmsg_exit("file too small for NT headers (bad lfanew)");
     }
 
-    const ImageNtHeaders64* nt = offset_ptr(file, dos->lfanew);
-    check_nt_headers(nt, is_dll);
-    const ImageSectionHeader* sections = nt_header_get_sections(file, file_size, nt);
-    check_sections(nt, sections);
-    pe_print_nt_headers_64(nt);
+    size_t max_optional_size =
+        offsetof(ImageNtHeaders, u64) +
+        (nt.is_64bit ? sizeof(ImageOptionalHeaders64) : sizeof(ImageOptionalHeaders32));
+    size_t optional_copy_size =
+        file_size - dos->lfanew < max_optional_size ? file_size - dos->lfanew : max_optional_size;
+    memcpy(&nt, offset_ptr(file, dos->lfanew), optional_copy_size);
+
+    check_nt_headers(&nt, is_dll);
+    const ImageSectionHeader* sections = nt_header_get_sections(file, file_size, dos->lfanew, &nt);
+    check_sections(&nt, sections);
+    pe_print_nt_headers(&nt);
 
     printf("---------------\n");
 
-    ImageDataDirectory tls_dir =
-        optional_header_get_data_directory(&nt->optional_header, IMAGE_DIRECTORY_ENTRY_TLS);
+    ImageDataDirectory tls_dir = nt_get_data_directory(&nt, IMAGE_DIRECTORY_ENTRY_TLS);
     if (tls_dir.virtual_address != 0 || tls_dir.size != 0) {
         pmsg_exit("unimplemented: tls");
     }
 
-    size_t image_size = round_up_pow2(nt->optional_header.size_of_image, LOADER_PAGE_SIZE);
-    size_t headers_size = nt->optional_header.size_of_headers;
+    size_t image_size =
+        round_up_pow2(nt.is_64bit ? nt.u64.size_of_image : nt.u32.size_of_image, LOADER_PAGE_SIZE);
+    size_t headers_size = nt.is_64bit ? nt.u64.size_of_headers : nt.u32.size_of_headers;
     if (headers_size > file_size || headers_size > image_size) {
         pmsg_exit("headers outside of file or image (bad size_of_headers)");
     }
 
     // Map memory for image
-    void* preferred_base = (void*)(uintptr_t)nt->optional_header.image_base;
+    void* preferred_base = (void*)(uintptr_t)(nt.is_64bit ? nt.u64.image_base : nt.u32.image_base);
     size_t reserve_size = image_size + LOADER_IMAGE_ALIGNMENT - LOADER_PAGE_SIZE;
     uint8_t* reserve = mmap(
-        preferred_base, reserve_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0
+        preferred_base, reserve_size, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS | (nt.is_64bit ? 0 : MAP_32BIT), -1, 0
     );
     if (reserve == MAP_FAILED) {
         perror_exit("mmap image reserve");
@@ -307,7 +367,7 @@ Module* map_image(
         perror_exit("munmap image reserve tail");
     }
 
-    bool relocatable = !(nt->file_header.characteristics & IMAGE_FILE_RELOCS_STRIPPED);
+    bool relocatable = !(nt.file_header.characteristics & IMAGE_FILE_RELOCS_STRIPPED);
     if (base != preferred_base && !relocatable) {
         pmsg_exit("image is not relocatable and count not be mapped at its preferred address");
     }
@@ -316,7 +376,7 @@ Module* map_image(
 
     // Copy data to image
     memcpy(base, file, headers_size);
-    for (int idx = 0; idx < nt->file_header.number_of_sections; idx++) {
+    for (int idx = 0; idx < nt.file_header.number_of_sections; idx++) {
         const ImageSectionHeader* section = &sections[idx];
 
         size_t copy_size = section->size_of_raw_data;
@@ -341,7 +401,7 @@ Module* map_image(
     }
 
     // Apply relocations
-    apply_relocations(base, image_size, &nt->optional_header);
+    apply_relocations(base, image_size, &nt);
 
     module_map_insert(
         module_map, (Module){.name = name,
@@ -353,8 +413,8 @@ Module* map_image(
                              .image.nt = nt}
     );
 
-    resolve_imports(base, image_size, &nt->optional_header, module_map);
-    set_protections(base, sections, nt->file_header.number_of_sections, headers_size, image_size);
+    resolve_imports(base, image_size, &nt, module_map, image_arch);
+    set_protections(base, sections, nt.file_header.number_of_sections, headers_size, image_size);
     return module_map_get(module_map, name, is_dll);
 }
 
@@ -373,9 +433,7 @@ int start_image(ModuleMap* module_map, Module* module) {
     printf("[loader] starting module %s\n", module->name);
     module->state = MODULE_INITIALIZED;
 
-    ImageDataDirectory dir = optional_header_get_data_directory(
-        &module->image.nt->optional_header, IMAGE_DIRECTORY_ENTRY_IMPORT
-    );
+    ImageDataDirectory dir = nt_get_data_directory(&module->image.nt, IMAGE_DIRECTORY_ENTRY_IMPORT);
     if (dir.virtual_address != 0) {
         for (size_t desc_offset = 0;; desc_offset += sizeof(ImageImportDescriptor)) {
             const ImageImportDescriptor* desc = rva_offset_ranged(
@@ -395,12 +453,12 @@ int start_image(ModuleMap* module_map, Module* module) {
         printf("[loader] no imports\n");
     }
 
-    uint32_t address_of_entry_point = module->image.nt->optional_header.address_of_entry_point;
+    uint32_t address_of_entry_point = module->image.nt.is_64bit
+                                          ? module->image.nt.u64.address_of_entry_point
+                                          : module->image.nt.u32.address_of_entry_point;
     if (address_of_entry_point != 0) {
         if (module->image.is_dll) {
-            typedef int(__attribute__((ms_abi)) * DllEntry)(
-                void* hinst, uint32_t reason, void* reserved
-            );
+            typedef int(WINAPI * DllEntry)(void* hinst, uint32_t reason, void* reserved);
             DllEntry entry = (DllEntry)rva_offset(
                 module->image.base, address_of_entry_point, module->image.size, NULL
             );
@@ -418,8 +476,7 @@ int start_image(ModuleMap* module_map, Module* module) {
         } else {
             typedef int(__attribute__((ms_abi)) * EntryPoint)(void);
             EntryPoint entry = (EntryPoint)rva_offset(
-                module->image.base, module->image.nt->optional_header.address_of_entry_point,
-                module->image.size, NULL
+                module->image.base, address_of_entry_point, module->image.size, NULL
             );
             printf("[loader] jumping to exe entry at %p\n\n", (void*)entry);
             fflush(stdout);
@@ -447,11 +504,11 @@ void detach_image(ModuleMap* module_map, Module* module) {
     printf("[loader] detaching module %s\n", module->name);
     module->state = MODULE_MAPPED;
 
-    uint32_t address_of_entry_point = module->image.nt->optional_header.address_of_entry_point;
+    uint32_t address_of_entry_point = module->image.nt.is_64bit
+                                          ? module->image.nt.u64.address_of_entry_point
+                                          : module->image.nt.u32.address_of_entry_point;
     if (module->image.is_dll && address_of_entry_point != 0) {
-        typedef int(__attribute__((ms_abi)) * DllEntry)(
-            void* hinst, uint32_t reason, void* reserved
-        );
+        typedef int(WINAPI * DllEntry)(void* hinst, uint32_t reason, void* reserved);
         DllEntry entry = (DllEntry)rva_offset(
             module->image.base, address_of_entry_point, module->image.size, NULL
         );
@@ -464,9 +521,7 @@ void detach_image(ModuleMap* module_map, Module* module) {
         printf("\n[loader] detached dll %s\n", module->name);
     }
 
-    ImageDataDirectory dir = optional_header_get_data_directory(
-        &module->image.nt->optional_header, IMAGE_DIRECTORY_ENTRY_IMPORT
-    );
+    ImageDataDirectory dir = nt_get_data_directory(&module->image.nt, IMAGE_DIRECTORY_ENTRY_IMPORT);
     if (dir.virtual_address != 0) {
         for (size_t desc_offset = 0;; desc_offset += sizeof(ImageImportDescriptor)) {
             const ImageImportDescriptor* desc = rva_offset_ranged(

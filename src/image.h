@@ -22,7 +22,7 @@ typedef struct Module {
             _Bool is_dll;
             uint8_t* base;
             size_t size;
-            const ImageNtHeaders64* nt;
+            ImageNtHeaders nt;
         } image;
 
         struct {
@@ -34,8 +34,11 @@ typedef struct Module {
 
 typedef struct ModuleMap ModuleMap;
 
+typedef enum { IMAGE_ARCH_EITHER, IMAGE_ARCH_PE, IMAGE_ARCH_PE_PLUS } ImageArch;
+
 Module* map_image(
-    ModuleMap* module_map, const char* name, const uint8_t* file, size_t file_size, _Bool is_dll
+    ModuleMap* module_map, const char* name, const uint8_t* file, size_t file_size, _Bool is_dll,
+    ImageArch arch
 );
 
 int start_image(ModuleMap* module_map, Module* module);
