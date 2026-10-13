@@ -1,2 +1,7 @@
 CompileFlags:
   Add: [-xc]
+---
+If:
+  PathMatch: examples/.*
+CompileFlags:
+  Add: [--target=x86_64-w64-windows-gnu]
