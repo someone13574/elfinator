@@ -17,7 +17,6 @@
 #include "util.h"
 
 #define LOW_MEM_FLOOR 0x10000ull
-#define LOW_MEM_TOP_GAP 0x10000ull
 
 typedef struct {
     uint64_t start;

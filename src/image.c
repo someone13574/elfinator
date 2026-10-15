@@ -12,6 +12,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "compat.h"
 #include "dll.h"
 #include "low_mem.h"
 #include "module_map.h"
@@ -343,7 +344,10 @@ Module* map_image(
 #ifdef ELFINATOR_COMPAT
     if (!is_dll && !nt.is_64bit && !low_mem_is_reserved()) {
         _Bool large_address_aware = (nt.file_header.characteristics & 0x20) == 0x20;
-        low_mem_reserve(large_address_aware ? (1ull << 32) : (1ull << 31));
+        uint64_t limit = large_address_aware ? (1ull << 32) : (1ull << 31);
+        low_mem_reserve(limit);
+        compat_init(limit);
+        compat_alloc_stack(nt.u32.size_of_stack_reserve);
     }
 #endif
 
@@ -492,7 +496,20 @@ int start_image(ModuleMap* module_map, Module* module) {
 
             // Guest code writes to the fd directly, so the log needs to be flushed to stay in order
             fflush(stdout);
+#ifdef ELFINATOR_COMPAT
+            int code;
+            if (!module->image.nt.is_64bit) {
+                uint32_t args[3] = {
+                    (uint32_t)(uintptr_t)module->image.base, DLL_PROCESS_ATTACH,
+                    (uint32_t)(uintptr_t)NULL
+                };
+                code = (int)compat_call32((uint32_t)(uintptr_t)entry, args, 3);
+            } else {
+                code = entry(module->image.base, DLL_PROCESS_ATTACH, NULL);
+            }
+#else
             int code = entry(module->image.base, DLL_PROCESS_ATTACH, NULL);
+#endif
             if (code == 0) {
                 pmsg_exit("DllMain failed (returned 0)");
             }
@@ -506,7 +523,16 @@ int start_image(ModuleMap* module_map, Module* module) {
             );
             printf("[loader] jumping to exe entry at %p\n\n", (void*)entry);
             fflush(stdout);
+#ifdef ELFINATOR_COMPAT
+            int code;
+            if (!module->image.nt.is_64bit) {
+                code = (int)compat_call32((uint32_t)(uintptr_t)entry, NULL, 0);
+            } else {
+                code = entry();
+            }
+#else
             int code = entry();
+#endif
             printf("\n[loader] entry returned exit code %d\n", code);
             return code;
         }
@@ -542,7 +568,19 @@ void detach_image(ModuleMap* module_map, Module* module) {
 
         // Guest code writes to the fd directly, so the log needs to be flushed to stay in order
         fflush(stdout);
+#ifdef ELFINATOR_COMPAT
+        if (!module->image.nt.is_64bit) {
+            uint32_t args[3] = {
+                (uint32_t)(uintptr_t)module->image.base, DLL_PROCESS_DETACH,
+                (uint32_t)(uintptr_t)NULL
+            };
+            compat_call32((uint32_t)(uintptr_t)entry, args, 3);
+        } else {
+            entry(module->image.base, DLL_PROCESS_DETACH, NULL);
+        }
+#else
         entry(module->image.base, DLL_PROCESS_DETACH, NULL);
+#endif
 
         printf("\n[loader] detached dll %s\n", module->name);
     }
