@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -15,7 +16,8 @@
 
 #include "util.h"
 
-#define LOW_MEM_MIN 0x10000ull
+#define LOW_MEM_FLOOR 0x10000ull
+#define LOW_MEM_TOP_GAP 0x10000ull
 
 typedef struct {
     uint64_t start;
@@ -152,21 +154,42 @@ static void reserve_range(uint64_t start, uint64_t end, uint64_t page_size) {
     range_list_insert(&available_ranges, (U64Range){.start = start, .end = end});
 }
 
+static uint64_t low_mem_min(uint64_t page_size) {
+    uint64_t min = LOW_MEM_FLOOR;
+
+    FILE* file = fopen("/proc/sys/vm/mmap_min_addr", "r");
+    if (file) {
+        uint64_t mmap_min_addr;
+        if (fscanf(file, "%" SCNu64, &mmap_min_addr) == 1 && mmap_min_addr > min) {
+            min = mmap_min_addr;
+        }
+        fclose(file);
+    }
+
+    return round_up_pow2(min, page_size);
+}
+
 _Bool low_mem_is_reserved() {
     return available_ranges.ranges && available_ranges.capacity != 0;
 }
 
 void low_mem_reserve(uint64_t limit) {
     size_t page_size = sysconf(_SC_PAGESIZE);
-    assert(limit <= (1ull << 32) && (limit % page_size) == 0 && limit > LOW_MEM_MIN);
+    assert(limit <= (1ull << 32) && (limit % page_size) == 0);
     assert(!low_mem_is_reserved());
+
+    uint64_t start = low_mem_min(page_size);
+    uint64_t end = limit - LOW_MEM_TOP_GAP;
+    if (end <= start) {
+        pmsg_exit("mmap_min_addr leaves no low memory to reserve");
+    }
 
     available_ranges = range_list_init(16);
 
-    reserve_range(LOW_MEM_MIN, limit, page_size);
+    reserve_range(start, end, page_size);
 
     size_t reserved = range_list_sum(&available_ranges);
-    size_t requested = limit - LOW_MEM_MIN;
+    size_t requested = end - start;
     printf(
         "[loader] reserved %zu of %zu low bytes (%zu bytes already in use)\n", reserved, requested,
         requested - reserved
