@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "dll.h"
+#include "low_mem.h"
 #include "module_map.h"
 #include "pe_print.h"
 #include "pe_types.h"
@@ -99,11 +100,11 @@ static void apply_relocations(uint8_t* base, size_t image_size, const ImageNtHea
     printf("[loader] applied %lu relocations, delta=0x%016" PRIx64 "\n", fixed_entries, delta);
 }
 
-static void resolve_imports(
-    uint8_t* base, size_t image_size, const ImageNtHeaders* nt, ModuleMap* module_map,
-    ImageArch image_arch
-) {
+static void
+resolve_imports(uint8_t* base, size_t image_size, const ImageNtHeaders* nt, ModuleMap* module_map) {
     assert(base && nt && module_map);
+
+    ImageArch image_arch = nt->is_64bit ? IMAGE_ARCH_PE_PLUS : IMAGE_ARCH_PE;
 
     ImageDataDirectory dir = nt_get_data_directory(nt, IMAGE_DIRECTORY_ENTRY_IMPORT);
     if (dir.virtual_address == 0) {
@@ -131,7 +132,8 @@ static void resolve_imports(
                 pmsg_exit("unknown dll file");
             }
 
-            module = map_image(module_map, dll_name, dll_file, dll_file_size, true, image_arch);
+            module =
+                map_image(module_map, dll_name, dll_file, dll_file_size, true, image_arch, NULL);
         }
 
         // Sometime the IAT doubles as the ILT
@@ -273,7 +275,7 @@ static void set_protections(
 
 Module* map_image(
     ModuleMap* module_map, const char* name, const uint8_t* file, size_t file_size, _Bool is_dll,
-    ImageArch image_arch
+    ImageArch image_arch, LoadBuiltinsFn load_builtins
 ) {
     assert(module_map && name && file);
     assert(sysconf(_SC_PAGESIZE) == LOADER_PAGE_SIZE);
@@ -338,6 +340,17 @@ Module* map_image(
         pmsg_exit("unimplemented: tls");
     }
 
+#ifdef ELFINATOR_COMPAT
+    if (!is_dll && !nt.is_64bit && !low_mem_is_reserved()) {
+        _Bool large_address_aware = (nt.file_header.characteristics & 0x20) == 0x20;
+        low_mem_reserve(large_address_aware ? (1ull << 32) : (1ull << 31));
+    }
+#endif
+
+    if (load_builtins) {
+        load_builtins(module_map, nt.is_64bit);
+    }
+
     size_t image_size =
         round_up_pow2(nt.is_64bit ? nt.u64.size_of_image : nt.u32.size_of_image, LOADER_PAGE_SIZE);
     size_t headers_size = nt.is_64bit ? nt.u64.size_of_headers : nt.u32.size_of_headers;
@@ -347,24 +360,37 @@ Module* map_image(
 
     // Map memory for image
     void* preferred_base = (void*)(uintptr_t)(nt.is_64bit ? nt.u64.image_base : nt.u32.image_base);
-    size_t reserve_size = image_size + LOADER_IMAGE_ALIGNMENT - LOADER_PAGE_SIZE;
-    uint8_t* reserve = mmap(
-        preferred_base, reserve_size, PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS | (nt.is_64bit ? 0 : MAP_32BIT), -1, 0
-    );
-    if (reserve == MAP_FAILED) {
-        perror_exit("mmap image reserve");
+    uint8_t* base = NULL;
+#ifdef ELFINATOR_COMPAT
+    if (!nt.is_64bit) {
+        base =
+            low_mem_alloc((uint64_t)(uintptr_t)preferred_base, image_size, LOADER_IMAGE_ALIGNMENT);
+        if (!base) {
+            pmsg_exit("no reserved low memory available for 32-bit image");
+        }
     }
+#endif
 
-    uint8_t* base = (uint8_t*)round_up_pow2((uintptr_t)reserve, LOADER_IMAGE_ALIGNMENT);
-    size_t reserve_head_size = (size_t)(base - reserve);
-    size_t reserve_tail_size = reserve_size - reserve_head_size - image_size;
-    if (reserve_head_size != 0 && munmap(reserve, reserve_head_size) != 0) {
-        perror_exit("munmap image reserve head");
-    }
+    if (!base) {
+        size_t reserve_size = image_size + LOADER_IMAGE_ALIGNMENT - LOADER_PAGE_SIZE;
+        uint8_t* reserve = mmap(
+            preferred_base, reserve_size, PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS | (nt.is_64bit ? 0 : MAP_32BIT), -1, 0
+        );
+        if (reserve == MAP_FAILED) {
+            perror_exit("mmap image reserve");
+        }
 
-    if (reserve_tail_size != 0 && munmap(base + image_size, reserve_tail_size) != 0) {
-        perror_exit("munmap image reserve tail");
+        base = (uint8_t*)round_up_pow2((uintptr_t)reserve, LOADER_IMAGE_ALIGNMENT);
+        size_t reserve_head_size = (size_t)(base - reserve);
+        size_t reserve_tail_size = reserve_size - reserve_head_size - image_size;
+        if (reserve_head_size != 0 && munmap(reserve, reserve_head_size) != 0) {
+            perror_exit("munmap image reserve head");
+        }
+
+        if (reserve_tail_size != 0 && munmap(base + image_size, reserve_tail_size) != 0) {
+            perror_exit("munmap image reserve tail");
+        }
     }
 
     bool relocatable = !(nt.file_header.characteristics & IMAGE_FILE_RELOCS_STRIPPED);
@@ -413,7 +439,7 @@ Module* map_image(
                              .image.nt = nt}
     );
 
-    resolve_imports(base, image_size, &nt, module_map, image_arch);
+    resolve_imports(base, image_size, &nt, module_map);
     set_protections(base, sections, nt.file_header.number_of_sections, headers_size, image_size);
     return module_map_get(module_map, name, is_dll);
 }

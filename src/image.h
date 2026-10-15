@@ -36,9 +36,11 @@ typedef struct ModuleMap ModuleMap;
 
 typedef enum { IMAGE_ARCH_EITHER, IMAGE_ARCH_PE, IMAGE_ARCH_PE_PLUS } ImageArch;
 
+typedef void (*LoadBuiltinsFn)(ModuleMap* module_map, _Bool is_64bit);
+
 Module* map_image(
     ModuleMap* module_map, const char* name, const uint8_t* file, size_t file_size, _Bool is_dll,
-    ImageArch arch
+    ImageArch arch, LoadBuiltinsFn load_builtins
 );
 
 int start_image(ModuleMap* module_map, Module* module);

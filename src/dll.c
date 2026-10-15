@@ -17,6 +17,8 @@ uint8_t* get_dll_file(const char* name, size_t* file_size_out) {
         return map_file("build/with_dll_lib.dll", file_size_out);
     } else if (strcmp("with_dll_lib32.dll", name) == 0) {
         return map_file("build/with_dll_lib32.dll", file_size_out);
+    } else if (strcmp("loader.dll", name) == 0) {
+        return map_file("build/loader32.dll", file_size_out);
     } else {
         fprintf(stderr, "unknown dll `%s`\n", name);
     }

@@ -14,7 +14,7 @@ void perror_exit(const char* message) {
 }
 
 void pmsg_exit(const char* message) {
-    fprintf(stderr, "%s\n", message);
+    fprintf(stderr, "error: %s\n", message);
     exit(1);
 }
 

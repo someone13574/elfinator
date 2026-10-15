@@ -1,7 +1,12 @@
 CompileFlags:
-  Add: [-xc, -DIMAGE_ARCH=IMAGE_ARCH_PE_PLUS]
+  Add: [-xc, -DIMAGE_ARCH=IMAGE_ARCH_EITHER, -DELFINATOR_COMPAT]
 ---
 If:
   PathMatch: examples/.*
 CompileFlags:
   Add: [--target=x86_64-w64-windows-gnu]
+---
+If:
+  PathMatch: dlls/.*
+CompileFlags:
+  Add: [--target=i686-w64-windows-gnu]
