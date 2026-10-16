@@ -4,9 +4,19 @@ CompileFlags:
 If:
   PathMatch: examples/.*
 CompileFlags:
-  Add: [--target=x86_64-w64-windows-gnu]
+  Add: [-xc, --target=x86_64-w64-windows-gnu]
+---
+If:
+  PathMatch: gen-builtins/.*
+CompileFlags:
+  Add: [-xc, -isystem/usr/lib/llvm/21/include]
 ---
 If:
   PathMatch: dlls/.*
 CompileFlags:
-  Add: [--target=i686-w64-windows-gnu]
+  Add: [-xc, --target=i686-w64-windows-gnu]
+---
+If:
+  PathMatch: build/builtins-out/32/.*
+CompileFlags:
+  Add: [-xc, --target=i686-w64-windows-gnu]

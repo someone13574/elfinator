@@ -1,0 +1,3 @@
+LIBRARY elfinator32.dll
+EXPORTS
+    elfinator_call64
