@@ -3,9 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-scripts/build-dlls32.sh
-
 mkdir -p build
+i686-w64-mingw32-dlltool -d build/gen/defs32/loader.def -l build/libloader32.a
 i686-w64-mingw32-gcc \
     -nostdlib -ffreestanding -fno-stack-protector -fno-asynchronous-unwind-tables -Os \
     -Wl,-e,_pe_entry -Wl,--dynamicbase -Wl,--enable-reloc-section \

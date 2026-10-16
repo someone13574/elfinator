@@ -12,11 +12,6 @@ CompileFlags:
   Add: [-xc, -isystem/usr/lib/llvm/21/include]
 ---
 If:
-  PathMatch: dlls/.*
-CompileFlags:
-  Add: [-xc, --target=i686-w64-windows-gnu]
----
-If:
-  PathMatch: build/builtins-out/32/.*
+  PathMatch: build/gen/dlls32/.*
 CompileFlags:
   Add: [-xc, --target=i686-w64-windows-gnu]

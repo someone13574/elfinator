@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "builtin_dlls.h"
 #include "image.h"
 #include "pe_types.h"
 #include "util.h"
@@ -13,12 +14,24 @@
 uint8_t* get_dll_file(const char* name, size_t* file_size_out) {
     assert(name && file_size_out);
 
+#ifdef ELFINATOR_COMPAT
+    for (size_t idx = 0; idx < builtin_dll_count; idx++) {
+        if (strcmp(builtin_dlls[idx].name, name) == 0) {
+            char path[512];
+            int len = snprintf(path, sizeof(path), "build/dlls32/%s", name);
+            if (len < 0 || (size_t)len >= sizeof(path)) {
+                pmsg_exit("dll path too long");
+            }
+
+            return map_file(path, file_size_out);
+        }
+    }
+#endif
+
     if (strcmp("with_dll_lib.dll", name) == 0) {
         return map_file("build/with_dll_lib.dll", file_size_out);
     } else if (strcmp("with_dll_lib32.dll", name) == 0) {
         return map_file("build/with_dll_lib32.dll", file_size_out);
-    } else if (strcmp("loader.dll", name) == 0) {
-        return map_file("build/loader32.dll", file_size_out);
     } else {
         fprintf(stderr, "unknown dll `%s`\n", name);
     }

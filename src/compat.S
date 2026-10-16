@@ -1,12 +1,16 @@
     .text
 
-// uint32_t call32(uint32_t edi/fn, uint32_t esi/stack_top, const uint32_t* rdx/args, uint32_t ecx/nargs)
-    // Position independent, copied below 4GB by compat_init (far jumps truncate to 32 bits)
-    .globl call32_start
-    .globl call32_end
+    .globl compat_start
+    .globl compat_end
+    .globl call32_enter
+    .globl call64_enter
+    .globl call64_dispatch
+compat_start:
+
     .code64
+    // uint32_t call32(uint32_t rdi/fn, uint32_t rsi/stack_top, const uint32_t* rdx/args, uint32_t rcx/nargs)
     // Enters in SysV x86-64 (must preserve rbx, rbp, rsp, r12-r15)
-call32_start:
+call32_enter:
     // Remember preserved (non-sp) registers
     push %rbx
     push %rbp
@@ -36,16 +40,16 @@ call32_start:
     dec %ecx
     jnz .Lcall32_copy_arg
 .Lcall32_args_done:
-    // Far jump to enter_call32 in 32-bit mode
+    // Far jump to call32_in32 in 32-bit mode
     pushq $0x23
-    lea leave_call32(%rip), %rsi
-    lea enter_call32(%rip), %rax
+    lea call32_restore(%rip), %rsi
+    lea call32_in32(%rip), %rax
     push %rax
     lretq
 
     .code32
     // Now in 32-bit mode, with args setup for i386 windows abi
-enter_call32:
+call32_in32:
     // Load DS and ES and call fn (in edi)
     mov $0x2b, %eax
     mov %eax, %ds
@@ -59,7 +63,7 @@ enter_call32:
 
     .code64
     // Now in 64-bit with return in EAX
-leave_call32:
+call32_restore:
     mov %ebx, %esp // cdecl callees leave their args behind, esp can't be trusted
     pop %rsp // restore 64-bit stack
     pop %r15 // restore callee-saved registers to get back to SysV abi
@@ -70,6 +74,66 @@ leave_call32:
     pop %rbx
     mov %eax, %eax // top half of rax is undefined, zero-extend
     ret
-call32_end:
+
+    .code32
+    // Enters in i386 cdecl (must preserve ebx, esi, edi, ebp, esp)
+    // SysV callee preserves (rbx, rsp, rbp)
+    // void elfinator_call64(uint32_t idx, const uint64_t* args, uint64_t* ret)
+    //   args on stack
+call64_enter:
+    push %ebp
+    mov %esp, %ebp // save sp since we do a 16-byte align later
+
+    // Save callee saved regs
+    push %ebx
+    push %esi
+    push %edi
+
+    // Get call64_in64 address (no rip-relative)
+    call .Lcall64_measure_pos
+.Lcall64_measure_pos:
+    pop %eax
+    lea (call64_in64 - .Lcall64_measure_pos)(%eax), %ecx
+
+    // Jump to 64-bit
+    push $0x33
+    push %ecx
+    lret
+
+    .code64
+    // In 64-bit mode on 32-bit stack
+call64_in64:
+    mov %esp, %esp // zero-extend
+    mov %ebp, %ebp
+
+    // Move cdecl args to sysv (edi, esi, edx)
+    mov 8(%rbp), %edi
+    mov 12(%rbp), %esi
+    mov 16(%rbp), %edx
+
+    // Call fn
+    and $-16, %rsp // 16-byte align
+    call *call64_dispatch(%rip)
+
+    // Return
+    lea call64_restore(%rip), %rax
+    pushq $0x23
+    push %rax
+    lretq
+
+    .code32
+    // Back in 32-bit
+call64_restore:
+    lea -12(%ebp), %esp
+    pop %edi
+    pop %esi
+    pop %ebx
+    pop %ebp
+    ret
+
+    .balign 8
+call64_dispatch:
+    .quad 0
+compat_end:
 
     .section .note.GNU-stack, "", @progbits

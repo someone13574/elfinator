@@ -3,25 +3,38 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "builtin_dlls.h"
+#include "compat.h"
 #include "image.h"
 #include "module_map.h"
 #include "util.h"
 
-static void __attribute__((ms_abi)) write_message(const char* msg, uint64_t len) {
-    ssize_t n = write(1, msg, (size_t)len);
-    (void)n;
-}
-
-static const BuiltinExport builtin_write_message = {.name = "write_message", .fn = write_message};
-
 static void load_builtins(ModuleMap* module_map, _Bool is_64bit) {
-    if (is_64bit) {
+#ifdef ELFINATOR_COMPAT
+    if (!is_64bit) {
+        static BuiltinExport call64_export = {.name = "elfinator_call64"};
+        call64_export.fn = compat_call64_entry();
         module_map_insert(
-            module_map, (Module){.name = "loader.dll",
+            module_map, (Module){.name = "elfinator32.dll",
                                  .is_builtin = true,
                                  .state = MODULE_INITIALIZED,
-                                 .builtin.exports = &builtin_write_message,
+                                 .builtin.exports = &call64_export,
                                  .builtin.builtin_count = 1}
+        );
+        return;
+    }
+#else
+    (void)is_64bit;
+#endif
+
+    // Compiled natively, so can be called directly
+    for (size_t idx = 0; idx < builtin_dll_count; idx++) {
+        module_map_insert(
+            module_map, (Module){.name = builtin_dlls[idx].name,
+                                 .is_builtin = true,
+                                 .state = MODULE_INITIALIZED,
+                                 .builtin.exports = builtin_dlls[idx].exports,
+                                 .builtin.builtin_count = builtin_dlls[idx].export_count}
         );
     }
 }

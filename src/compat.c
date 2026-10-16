@@ -9,24 +9,26 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "builtin_dlls.h"
 #include "low_mem.h"
 #include "util.h"
 
-// Defined in compat.S
-extern const uint8_t call32_start[];
-extern const uint8_t call32_end[];
+extern const uint8_t compat_start[];
+extern const uint8_t compat_end[];
+extern const uint8_t call32_enter[];
+extern const uint8_t call64_enter[];
+extern const uint8_t call64_dispatch[];
 
 // Windows linker default when the image doesn't specify one
 #define COMPAT_DEFAULT_STACK_RESERVE 0x100000u
 
-// Points at the copy of call32 in the top gap of low memory (set by compat_init)
 static uint32_t (*call32)(uint32_t fn, uint32_t stack_top, const uint32_t* args, uint32_t nargs);
-// Top of the calling thread's 32-bit stack (set by compat_alloc_stack)
 static _Thread_local uint32_t stack_top;
+static uint8_t* compat_base;
 
 void compat_init(uint64_t limit) {
     size_t page_size = sysconf(_SC_PAGESIZE);
-    size_t code_size = (size_t)(call32_end - call32_start);
+    size_t code_size = (size_t)(compat_end - compat_start);
     assert(code_size <= page_size && page_size <= LOW_MEM_TOP_GAP);
 
     uint64_t addr = limit - LOW_MEM_TOP_GAP;
@@ -42,12 +44,23 @@ void compat_init(uint64_t limit) {
         pmsg_exit("MAP_FIXED_NOREPLACE ignored (needs Linux 4.17)");
     }
 
-    memcpy(ptr, call32_start, code_size);
+    uint8_t* base = ptr;
+    memcpy(base, compat_start, code_size);
+
+    void (*dispatch)(uint32_t, const uint64_t*, uint64_t*) = builtins_dispatch;
+    memcpy(base + (call64_dispatch - compat_start), &dispatch, sizeof(dispatch));
+
     if (mprotect(ptr, page_size, PROT_READ | PROT_EXEC) != 0) {
         perror_exit("mprotect call32");
     }
 
-    call32 = ptr;
+    compat_base = base;
+    call32 = (void*)(base + (call32_enter - compat_start));
+}
+
+void* compat_call64_entry(void) {
+    assert(compat_base);
+    return compat_base + (call64_enter - compat_start);
 }
 
 void compat_alloc_stack(uint32_t stack_reserve) {
