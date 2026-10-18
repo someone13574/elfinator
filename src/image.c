@@ -12,8 +12,8 @@
 #include <unistd.h>
 
 #include "compat.h"
+#include "compat_arena.h"
 #include "import.h"
-#include "low_mem.h"
 #include "module_map.h"
 #include "pe_print.h"
 #include "pe_types.h"
@@ -158,10 +158,10 @@ Module* map_image(
     printf("---------------\n");
 
 #ifdef ELFINATOR_COMPAT
-    if (!is_dll && !nt.is_64bit && !low_mem_is_reserved()) {
+    if (!is_dll && !nt.is_64bit && !compat_arena_is_reserved()) {
         _Bool large_address_aware = (nt.file_header.characteristics & 0x20) == 0x20;
         uint64_t limit = large_address_aware ? (1ull << 32) : (1ull << 31);
-        low_mem_reserve(limit);
+        compat_arena_reserve(limit);
         compat_init(limit);
         compat_alloc_stack(nt.u32.size_of_stack_reserve);
     }
@@ -183,8 +183,9 @@ Module* map_image(
     uint8_t* base = NULL;
 #ifdef ELFINATOR_COMPAT
     if (!nt.is_64bit) {
-        base =
-            low_mem_alloc((uint64_t)(uintptr_t)preferred_base, image_size, LOADER_IMAGE_ALIGNMENT);
+        base = compat_arena_alloc(
+            (uint64_t)(uintptr_t)preferred_base, image_size, LOADER_IMAGE_ALIGNMENT
+        );
         if (!base) {
             pmsg_exit("no reserved low memory available for 32-bit image");
         }

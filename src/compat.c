@@ -10,7 +10,7 @@
 #include <unistd.h>
 
 #include "builtin_dlls.h"
-#include "low_mem.h"
+#include "compat_arena.h"
 #include "util.h"
 
 extern const uint8_t compat_start[];
@@ -29,9 +29,9 @@ static uint8_t* compat_base;
 void compat_init(uint64_t limit) {
     size_t page_size = sysconf(_SC_PAGESIZE);
     size_t code_size = (size_t)(compat_end - compat_start);
-    assert(code_size <= page_size && page_size <= LOW_MEM_TOP_GAP);
+    assert(code_size <= page_size && page_size <= COMPAT_ARENA_TOP_GAP);
 
-    uint64_t addr = limit - LOW_MEM_TOP_GAP;
+    uint64_t addr = limit - COMPAT_ARENA_TOP_GAP;
     void* ptr = mmap(
         (void*)(uintptr_t)addr, page_size, PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0
@@ -71,7 +71,7 @@ void compat_alloc_stack(uint32_t stack_reserve) {
         stack_reserve = COMPAT_DEFAULT_STACK_RESERVE;
     }
     size_t stack_size = round_up_pow2(stack_reserve, page_size) + page_size;
-    uint8_t* stack = low_mem_alloc(0, stack_size, page_size);
+    uint8_t* stack = compat_arena_alloc(0, stack_size, page_size);
     if (!stack) {
         pmsg_exit("no reserved low memory available for 32-bit stack");
     }
