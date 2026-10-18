@@ -2,9 +2,7 @@
 
 #include <assert.h>
 #include <stddef.h>
-#include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 
 #include "util.h"
 
@@ -177,65 +175,5 @@ void check_sections(const ImageNtHeaders* nt, const ImageSectionHeader* sections
 
     if (next_address > size_of_image) {
         pmsg_exit("sections extend past size of image");
-    }
-}
-
-ImageTlsDirectory read_tls_directory(
-    const uint8_t* base, size_t image_size, const ImageDataDirectory* dir, _Bool is_64bit
-) {
-    assert(base && dir);
-
-    size_t struct_size = is_64bit ? sizeof(ImageTlsDirectory) : sizeof(ImageTlsDirectory32);
-    if (dir->size < struct_size) {
-        pmsg_exit("tls directory size too small");
-    }
-
-    const void* ptr = rva_offset_ranged(base, dir->virtual_address, struct_size, image_size);
-    if (is_64bit) {
-        ImageTlsDirectory tls_dir;
-        memcpy(&tls_dir, ptr, sizeof(tls_dir));
-        return tls_dir;
-    } else {
-        ImageTlsDirectory32 tls_dir;
-        memcpy(&tls_dir, ptr, sizeof(tls_dir));
-        return (ImageTlsDirectory){.start_address_of_raw_data = tls_dir.start_address_of_raw_data,
-                                   .end_address_of_raw_data = tls_dir.end_address_of_raw_data,
-                                   .address_of_index = tls_dir.address_of_index,
-                                   .address_of_call_backs = tls_dir.address_of_call_backs,
-                                   .size_of_zero_fill = tls_dir.size_of_zero_fill,
-                                   .characteristics = tls_dir.characteristics};
-    }
-}
-
-static size_t va_to_rva(uintptr_t va, uintptr_t base) {
-    if (va < base) {
-        pmsg_exit("invalid virtual address (possibly not recorded in relocations)");
-    }
-    return va - base;
-}
-
-void validate_and_relativize_tls_directory(
-    ImageTlsDirectory* dir, uintptr_t base, size_t image_size, _Bool is_64bit
-) {
-    assert(dir && base);
-
-    dir->start_address_of_raw_data = va_to_rva(dir->start_address_of_raw_data, base);
-    dir->end_address_of_raw_data = va_to_rva(dir->end_address_of_raw_data, base);
-    check_rva_range(image_size, dir->start_address_of_raw_data, dir->end_address_of_raw_data);
-
-    dir->address_of_index = va_to_rva(dir->address_of_index, base);
-    check_rva_range(image_size, dir->address_of_index, dir->address_of_index + 4);
-
-    if (dir->address_of_call_backs) {
-        dir->address_of_call_backs = va_to_rva(dir->address_of_call_backs, base);
-        const size_t ptr_size = is_64bit ? 8 : 4;
-        check_rva_range(
-            image_size, dir->address_of_call_backs, dir->address_of_call_backs + ptr_size
-        );
-    }
-
-    uint32_t alignment_idx = (dir->characteristics >> 20) & 0xf;
-    if (alignment_idx > 14) {
-        fprintf(stderr, "[loader] warning: undefined tls alignment\n");
     }
 }

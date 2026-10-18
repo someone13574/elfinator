@@ -43,6 +43,3 @@ Module* map_image(
     ModuleMap* module_map, const char* name, const uint8_t* file, size_t file_size, _Bool is_dll,
     ImageArch arch, LoadBuiltinsFn load_builtins
 );
-
-int start_image(ModuleMap* module_map, Module* module);
-void detach_image(ModuleMap* module_map, Module* module);

@@ -210,10 +210,3 @@ const ImageSectionHeader* nt_header_get_sections(
     const uint8_t* file, size_t file_size, size_t nt_offset, const ImageNtHeaders* nt
 );
 void check_sections(const ImageNtHeaders* nt, const ImageSectionHeader* sections);
-
-ImageTlsDirectory read_tls_directory(
-    const uint8_t* base, size_t image_size, const ImageDataDirectory* dir, _Bool is_64bit
-);
-void validate_and_relativize_tls_directory(
-    ImageTlsDirectory* dir, uintptr_t base, size_t image_size, _Bool is_64bit
-);

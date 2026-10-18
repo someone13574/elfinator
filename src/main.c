@@ -5,6 +5,7 @@
 
 #include "builtin_dlls.h"
 #include "compat.h"
+#include "entry.h"
 #include "image.h"
 #include "module_map.h"
 #include "util.h"
