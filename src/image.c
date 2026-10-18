@@ -89,8 +89,7 @@ static void apply_relocations(uint8_t* base, size_t image_size, const ImageNtHea
                     break;
                 }
                 default: {
-                    fprintf(stderr, "unimplemented base relocation entry type %d\n", type);
-                    exit(1);
+                    pmsg_exit("unimplemented base relocation entry type %d", type);
                 }
             }
         }
@@ -336,11 +335,6 @@ Module* map_image(
 
     printf("---------------\n");
 
-    ImageDataDirectory tls_dir = nt_get_data_directory(&nt, IMAGE_DIRECTORY_ENTRY_TLS);
-    if (tls_dir.virtual_address != 0 || tls_dir.size != 0) {
-        pmsg_exit("unimplemented: tls");
-    }
-
 #ifdef ELFINATOR_COMPAT
     if (!is_dll && !nt.is_64bit && !low_mem_is_reserved()) {
         _Bool large_address_aware = (nt.file_header.characteristics & 0x20) == 0x20;
@@ -430,8 +424,20 @@ Module* map_image(
         );
     }
 
-    // Apply relocations
     apply_relocations(base, image_size, &nt);
+
+    ImageDataDirectory tls_dir = nt_get_data_directory(&nt, IMAGE_DIRECTORY_ENTRY_TLS);
+    uint32_t tls_index = UINT32_MAX;
+    if (tls_dir.virtual_address != 0) {
+        tls_index = module_map_next_tls_idx(module_map);
+
+        ImageTlsDirectory tls = read_tls_directory(base, image_size, &tls_dir, nt.is_64bit);
+        validate_and_relativize_tls_directory(&tls, (uintptr_t)base, image_size, nt.is_64bit);
+
+        u32_align1* index =
+            rva_offset_ranged(base, tls.address_of_index, sizeof(u32_align1), image_size);
+        *index = tls_index;
+    }
 
     module_map_insert(
         module_map, (Module){.name = name,
@@ -440,7 +446,8 @@ Module* map_image(
                              .image.is_dll = is_dll,
                              .image.base = base,
                              .image.size = image_size,
-                             .image.nt = nt}
+                             .image.nt = nt,
+                             .image.tls_index = tls_index}
     );
 
     resolve_imports(base, image_size, &nt, module_map);

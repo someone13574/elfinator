@@ -183,6 +183,24 @@ typedef struct __attribute__((packed)) {
     uint32_t address_of_name_ordinals;
 } ImageExportDirectory;
 
+typedef struct __attribute__((packed)) {
+    uint32_t start_address_of_raw_data;
+    uint32_t end_address_of_raw_data;
+    uint32_t address_of_index;
+    uint32_t address_of_call_backs;
+    uint32_t size_of_zero_fill;
+    uint32_t characteristics;
+} ImageTlsDirectory32;
+
+typedef struct __attribute__((packed)) {
+    uint64_t start_address_of_raw_data;
+    uint64_t end_address_of_raw_data;
+    uint64_t address_of_index;
+    uint64_t address_of_call_backs;
+    uint32_t size_of_zero_fill;
+    uint32_t characteristics;
+} ImageTlsDirectory;
+
 void check_dos_header(const ImageDosHeader* dos);
 void check_nt_headers(const ImageNtHeaders* nt, _Bool is_dll);
 size_t nt_get_fixed_size(_Bool is_64bit);
@@ -192,3 +210,10 @@ const ImageSectionHeader* nt_header_get_sections(
     const uint8_t* file, size_t file_size, size_t nt_offset, const ImageNtHeaders* nt
 );
 void check_sections(const ImageNtHeaders* nt, const ImageSectionHeader* sections);
+
+ImageTlsDirectory read_tls_directory(
+    const uint8_t* base, size_t image_size, const ImageDataDirectory* dir, _Bool is_64bit
+);
+void validate_and_relativize_tls_directory(
+    ImageTlsDirectory* dir, uintptr_t base, size_t image_size, _Bool is_64bit
+);

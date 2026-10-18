@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <stdio.h>
 
-void perror_exit(const char* message);
-void pmsg_exit(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+void perror_exit(const char* message) __attribute__((noreturn));
+void pmsg_exit(const char* fmt, ...) __attribute__((noreturn, format(printf, 1, 2)));
 
 /// Creates a new directory at `path` if it doesn't exist, recursively
 void mkdir_recursive(const char* path);

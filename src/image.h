@@ -23,6 +23,7 @@ typedef struct Module {
             uint8_t* base;
             size_t size;
             ImageNtHeaders nt;
+            uint32_t tls_index;
         } image;
 
         struct {
