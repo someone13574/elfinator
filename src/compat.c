@@ -11,6 +11,7 @@
 
 #include "builtin_dlls.h"
 #include "compat_arena.h"
+#include "image.h"
 #include "util.h"
 
 extern const uint8_t compat_start[];
@@ -70,8 +71,8 @@ void compat_alloc_stack(uint32_t stack_reserve) {
     if (stack_reserve == 0) {
         stack_reserve = COMPAT_DEFAULT_STACK_RESERVE;
     }
-    size_t stack_size = round_up_pow2(stack_reserve, page_size) + page_size;
-    uint8_t* stack = compat_arena_alloc(0, stack_size, page_size);
+    size_t stack_size = round_up_pow2(stack_reserve, ALLOCATION_GRANULARITY);
+    uint8_t* stack = compat_arena_alloc(0, stack_size, ALLOCATION_GRANULARITY);
     if (!stack) {
         pmsg_exit("no reserved low memory available for 32-bit stack");
     }

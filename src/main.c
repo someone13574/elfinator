@@ -7,6 +7,7 @@
 #include "compat.h"
 #include "entry.h"
 #include "image.h"
+#include "init.h"
 #include "module_map.h"
 #include "util.h"
 
@@ -55,6 +56,8 @@ int main(int argc, char** argv) {
     ModuleMap module_map = module_map_new(8);
     Module* root_module =
         map_image(&module_map, exe_name, file, file_size, false, IMAGE_ARCH, load_builtins);
+    Process process = process_init(root_module, argc, argv);
+    thread_init(&process);
     int code = start_image(&module_map, root_module);
     detach_image(&module_map, root_module);
 

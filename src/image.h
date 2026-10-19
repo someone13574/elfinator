@@ -5,6 +5,8 @@
 
 #include "pe_types.h"
 
+#define ALLOCATION_GRANULARITY 0x10000
+
 typedef enum { MODULE_MAPPED, MODULE_INITIALIZED } ModuleState;
 
 typedef struct {

@@ -22,7 +22,6 @@
 #include "util.h"
 
 #define LOADER_PAGE_SIZE 0x1000
-#define LOADER_IMAGE_ALIGNMENT 0x10000
 
 static void set_protections(
     uint8_t* base, const ImageSectionHeader* sections, uint16_t num_sections, size_t headers_size,
@@ -163,7 +162,6 @@ Module* map_image(
         uint64_t limit = large_address_aware ? (1ull << 32) : (1ull << 31);
         compat_arena_reserve(limit);
         compat_init(limit);
-        compat_alloc_stack(nt.u32.size_of_stack_reserve);
     }
 #endif
 
@@ -184,7 +182,7 @@ Module* map_image(
 #ifdef ELFINATOR_COMPAT
     if (!nt.is_64bit) {
         base = compat_arena_alloc(
-            (uint64_t)(uintptr_t)preferred_base, image_size, LOADER_IMAGE_ALIGNMENT
+            (uint64_t)(uintptr_t)preferred_base, image_size, ALLOCATION_GRANULARITY
         );
         if (!base) {
             pmsg_exit("no reserved low memory available for 32-bit image");
@@ -193,7 +191,7 @@ Module* map_image(
 #endif
 
     if (!base) {
-        size_t reserve_size = image_size + LOADER_IMAGE_ALIGNMENT - LOADER_PAGE_SIZE;
+        size_t reserve_size = image_size + ALLOCATION_GRANULARITY - LOADER_PAGE_SIZE;
         uint8_t* reserve = mmap(
             preferred_base, reserve_size, PROT_READ | PROT_WRITE,
             MAP_PRIVATE | MAP_ANONYMOUS | (nt.is_64bit ? 0 : MAP_32BIT), -1, 0
@@ -202,7 +200,7 @@ Module* map_image(
             perror_exit("mmap image reserve");
         }
 
-        base = (uint8_t*)round_up_pow2((uintptr_t)reserve, LOADER_IMAGE_ALIGNMENT);
+        base = (uint8_t*)round_up_pow2((uintptr_t)reserve, ALLOCATION_GRANULARITY);
         size_t reserve_head_size = (size_t)(base - reserve);
         size_t reserve_tail_size = reserve_size - reserve_head_size - image_size;
         if (reserve_head_size != 0 && munmap(reserve, reserve_head_size) != 0) {

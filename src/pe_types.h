@@ -22,7 +22,8 @@ typedef struct __attribute__((packed)) {
 enum {
     IMAGE_FILE_RELOCS_STRIPPED = 0x0001,
     IMAGE_FILE_EXECUTABLE_IMAGE = 0x0002,
-    IMAGE_FILE_DLL = 0x2000
+    IMAGE_FILE_DLL = 0x2000,
+    IMAGE_FILE_UP_SYSTEM_ONLY = 0x4000
 };
 
 enum {
@@ -166,7 +167,7 @@ typedef struct __attribute__((packed)) {
 
 typedef struct {
     uint16_t hint;
-    char name[1];
+    char name[];
 } ImageImportByName;
 
 typedef struct __attribute__((packed)) {
@@ -200,6 +201,150 @@ typedef struct __attribute__((packed)) {
     uint32_t size_of_zero_fill;
     uint32_t characteristics;
 } ImageTlsDirectory;
+
+enum { PROCESS_PARAMETERS_NORMALIZED = 0x1 };
+
+enum { PEB_IMAGE_DYNAMICALLY_RELOCATED = 0x4 };
+
+#if defined(__i386__) || defined(ELFINATOR_COMPAT)
+
+typedef struct {
+    uint16_t length;
+    uint16_t maximum_length;
+    uint32_t buffer;
+} UnicodeString32;
+
+typedef struct {
+    uint32_t maximum_length;
+    uint32_t length;
+    uint32_t flags;
+    uint32_t debug_flags;
+    uint8_t reserved1[0x14];
+    UnicodeString32 current_directory;
+    uint32_t current_directory_handle;
+    UnicodeString32 dll_path;
+    UnicodeString32 image_path_name;
+    UnicodeString32 command_line;
+    uint32_t environment;
+    uint8_t reserved2[0x278];
+} ProcessParameters32;
+
+typedef struct {
+    uint8_t reserved1[2];
+    uint8_t being_debugged;
+    uint8_t bit_field;
+    uint8_t reserved2[0x4];
+    uint32_t image_base_address;
+    uint32_t ldr_data;
+    uint32_t process_parameters;
+    uint8_t reserved3[0x4];
+    uint32_t process_heap;
+    uint32_t fast_peb_lock;
+    uint8_t reserved4[0x20];
+    uint32_t tls_bitmap;
+    uint32_t tls_bitmap_bits[2];
+    uint8_t reserved5[0x18];
+    uint32_t number_of_processors;
+    uint32_t nt_global_flag;
+    uint8_t reserved6[0x4];
+    int64_t critical_section_timeout;
+    uint8_t reserved7[0x28];
+    uint32_t loader_lock;
+    uint32_t os_major_version;
+    uint32_t os_minor_version;
+    uint16_t os_build_number;
+    uint16_t os_csd_version;
+    uint32_t os_platform_id;
+    uint32_t image_subsystem;
+    uint32_t image_subsystem_major_version;
+    uint32_t image_subsystem_minor_version;
+    uint32_t active_process_affinity_mask;
+    uint8_t reserved8[0x8c];
+    uint32_t tls_expansion_bitmap;
+    uint32_t tls_expansion_bitmap_bits[32];
+    uint32_t session_id;
+    uint8_t reserved9[0x2b0];
+} ProcessEnvironmentBlock32;
+
+_Static_assert(sizeof(ProcessEnvironmentBlock32) == 0x488, "PEB32 size");
+_Static_assert(offsetof(ProcessEnvironmentBlock32, image_base_address) == 0x8, "PEB32 offset");
+_Static_assert(offsetof(ProcessEnvironmentBlock32, process_parameters) == 0x10, "PEB32 offset");
+_Static_assert(offsetof(ProcessEnvironmentBlock32, number_of_processors) == 0x64, "PEB32 offset");
+_Static_assert(offsetof(ProcessEnvironmentBlock32, os_build_number) == 0xac, "PEB32 offset");
+_Static_assert(offsetof(ProcessEnvironmentBlock32, image_subsystem) == 0xb4, "PEB32 offset");
+_Static_assert(offsetof(ProcessEnvironmentBlock32, session_id) == 0x1d4, "PEB32 offset");
+
+#endif // __i386__ || ELFINATOR_COMPAT
+
+#ifdef __x86_64__
+
+typedef struct {
+    uint16_t length;
+    uint16_t maximum_length;
+    uint64_t buffer;
+} UnicodeString64;
+
+typedef struct {
+    uint32_t maximum_length;
+    uint32_t length;
+    uint32_t flags;
+    uint32_t debug_flags;
+    uint8_t reserved1[0x28];
+    UnicodeString64 current_directory;
+    uint64_t current_directory_handle;
+    UnicodeString64 dll_path;
+    UnicodeString64 image_path_name;
+    UnicodeString64 command_line;
+    uint64_t environment;
+    uint8_t reserved2[0x3c0];
+} ProcessParameters64;
+
+typedef struct {
+    uint8_t reserved1[2];
+    uint8_t being_debugged;
+    uint8_t bit_field;
+    uint8_t reserved2[0xc];
+    uint64_t image_base_address;
+    uint64_t ldr_data;
+    uint64_t process_parameters;
+    uint8_t reserved3[0x8];
+    uint64_t process_heap;
+    uint64_t fast_peb_lock;
+    uint8_t reserved4[0x38];
+    uint64_t tls_bitmap;
+    uint32_t tls_bitmap_bits[2];
+    uint8_t reserved5[0x30];
+    uint32_t number_of_processors;
+    uint32_t nt_global_flag;
+    int64_t critical_section_timeout;
+    uint8_t reserved6[0x48];
+    uint64_t loader_lock;
+    uint32_t os_major_version;
+    uint32_t os_minor_version;
+    uint16_t os_build_number;
+    uint16_t os_csd_version;
+    uint32_t os_platform_id;
+    uint32_t image_subsystem;
+    uint32_t image_subsystem_major_version;
+    uint32_t image_subsystem_minor_version;
+    uint8_t reserved7[0x4];
+    uint64_t active_process_affinity_mask;
+    uint8_t reserved8[0xf8];
+    uint64_t tls_expansion_bitmap;
+    uint32_t tls_expansion_bitmap_bits[32];
+    uint32_t session_id;
+    uint8_t reserved9[0x50c];
+} ProcessEnvironmentBlock64;
+
+_Static_assert(sizeof(ProcessEnvironmentBlock64) == 0x7d0, "PEB64 size");
+_Static_assert(offsetof(ProcessEnvironmentBlock64, image_base_address) == 0x10, "PEB64 offset");
+_Static_assert(offsetof(ProcessEnvironmentBlock64, process_parameters) == 0x20, "PEB64 offset");
+_Static_assert(offsetof(ProcessEnvironmentBlock64, number_of_processors) == 0xb8, "PEB64 offset");
+_Static_assert(offsetof(ProcessEnvironmentBlock64, os_build_number) == 0x120, "PEB64 offset");
+_Static_assert(offsetof(ProcessEnvironmentBlock64, image_subsystem) == 0x128, "PEB64 offset");
+_Static_assert(offsetof(ProcessEnvironmentBlock64, session_id) == 0x2c0, "PEB64 offset");
+
+#endif // __x86_64__
 
 void check_dos_header(const ImageDosHeader* dos);
 void check_nt_headers(const ImageNtHeaders* nt, _Bool is_dll);
