@@ -1,4 +1,4 @@
-#include "low_mem.h"
+#include "compat_arena.h"
 
 #ifdef ELFINATOR_COMPAT
 
@@ -16,7 +16,7 @@
 
 #include "util.h"
 
-#define LOW_MEM_FLOOR 0x10000ull
+#define COMPAT_ARENA_FLOOR 0x10000ull
 
 typedef struct {
     uint64_t start;
@@ -29,7 +29,7 @@ typedef struct {
     size_t capacity;
 } U64RangeList;
 
-static pthread_mutex_t low_mem_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t compat_arena_lock = PTHREAD_MUTEX_INITIALIZER;
 static U64RangeList available_ranges;
 
 static U64RangeList range_list_init(size_t capacity) {
@@ -125,6 +125,8 @@ static size_t range_list_sum(const U64RangeList* list) {
 }
 
 static void reserve_range(uint64_t start, uint64_t end, uint64_t page_size) {
+    assert(start < end && start % page_size == 0 && end % page_size == 0);
+
     void* ptr = mmap(
         (void*)start, end - start, PROT_NONE,
         MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0
@@ -153,8 +155,8 @@ static void reserve_range(uint64_t start, uint64_t end, uint64_t page_size) {
     range_list_insert(&available_ranges, (U64Range){.start = start, .end = end});
 }
 
-static uint64_t low_mem_min(uint64_t page_size) {
-    uint64_t min = LOW_MEM_FLOOR;
+static uint64_t compat_arena_min(uint64_t page_size) {
+    uint64_t min = COMPAT_ARENA_FLOOR;
 
     FILE* file = fopen("/proc/sys/vm/mmap_min_addr", "r");
     if (file) {
@@ -168,17 +170,17 @@ static uint64_t low_mem_min(uint64_t page_size) {
     return round_up_pow2(min, page_size);
 }
 
-_Bool low_mem_is_reserved() {
+_Bool compat_arena_is_reserved() {
     return available_ranges.ranges && available_ranges.capacity != 0;
 }
 
-void low_mem_reserve(uint64_t limit) {
+void compat_arena_reserve(uint64_t limit) {
     size_t page_size = sysconf(_SC_PAGESIZE);
     assert(limit <= (1ull << 32) && (limit % page_size) == 0);
-    assert(!low_mem_is_reserved());
+    assert(!compat_arena_is_reserved());
 
-    uint64_t start = low_mem_min(page_size);
-    uint64_t end = limit - LOW_MEM_TOP_GAP;
+    uint64_t start = compat_arena_min(page_size);
+    uint64_t end = limit - COMPAT_ARENA_TOP_GAP;
     if (end <= start) {
         pmsg_exit("mmap_min_addr leaves no low memory to reserve");
     }
@@ -195,14 +197,14 @@ void low_mem_reserve(uint64_t limit) {
     );
 }
 
-void* low_mem_alloc(uint64_t preferred, size_t size, size_t align) {
+void* compat_arena_alloc(uint64_t preferred, size_t size, size_t align) {
     size_t page_size = sysconf(_SC_PAGESIZE);
     assert(size > 0 && size % page_size == 0);
     assert(is_pow2(align) && align % page_size == 0);
 
-    pthread_mutex_lock(&low_mem_lock);
-    if (!low_mem_is_reserved()) {
-        pthread_mutex_unlock(&low_mem_lock);
+    pthread_mutex_lock(&compat_arena_lock);
+    if (!compat_arena_is_reserved()) {
+        pthread_mutex_unlock(&compat_arena_lock);
         return NULL;
     }
 
@@ -230,7 +232,7 @@ void* low_mem_alloc(uint64_t preferred, size_t size, size_t align) {
     }
 
     if (found_idx == available_ranges.len) {
-        pthread_mutex_unlock(&low_mem_lock);
+        pthread_mutex_unlock(&compat_arena_lock);
         return NULL;
     }
 
@@ -244,7 +246,7 @@ void* low_mem_alloc(uint64_t preferred, size_t size, size_t align) {
     }
 
     range_list_remove(&available_ranges, found_start, found_start + size, found_idx);
-    pthread_mutex_unlock(&low_mem_lock);
+    pthread_mutex_unlock(&compat_arena_lock);
     return ptr;
 }
 

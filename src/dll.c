@@ -45,6 +45,8 @@ static bool find_name_idx(
     const char* fn_name, uint16_t hint, size_t count, NameAtFn name_at, const void* ctx,
     size_t* idx_out
 ) {
+    assert(fn_name && name_at && idx_out);
+
     size_t low = 0;
     size_t high = count;
 
@@ -77,6 +79,8 @@ static bool find_name_idx(
 }
 
 static const char* builtin_name_at(const void* ctx, size_t idx) {
+    assert(ctx);
+
     return ((const BuiltinExport*)ctx)[idx].name;
 }
 
@@ -87,6 +91,8 @@ typedef struct {
 } ExportNames;
 
 static const char* export_name_at(const void* ctx, size_t idx) {
+    assert(ctx);
+
     const ExportNames* names = ctx;
     return rva_cstring(names->base, names->name_addresses[idx], names->image_size);
 }

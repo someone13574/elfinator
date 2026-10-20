@@ -27,7 +27,8 @@ ModuleMap module_map_new(size_t capacity) {
                        .slots = slots,
                        .slot_hashes = slot_hashes,
                        .names = {0},
-                       .temp = {0}};
+                       .temp = {0},
+                       .next_tls_idx = 0};
 }
 
 void module_map_free(ModuleMap* map) {
@@ -238,4 +239,9 @@ Module* module_map_insert(ModuleMap* map, Module module) {
     map->names.size += map->temp.size;
     uint32_t hash = fnv1a32_cstr(allocated->name);
     return module_map_insert_with_hash(map, allocated, hash);
+}
+
+uint32_t module_map_next_tls_idx(ModuleMap* map) {
+    assert(map);
+    return map->next_tls_idx++;
 }

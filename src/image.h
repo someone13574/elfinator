@@ -5,6 +5,8 @@
 
 #include "pe_types.h"
 
+#define ALLOCATION_GRANULARITY 0x10000
+
 typedef enum { MODULE_MAPPED, MODULE_INITIALIZED } ModuleState;
 
 typedef struct {
@@ -23,6 +25,8 @@ typedef struct Module {
             uint8_t* base;
             size_t size;
             ImageNtHeaders nt;
+            uint32_t tls_index;
+            ImageTlsDirectory tls;
         } image;
 
         struct {
@@ -42,6 +46,3 @@ Module* map_image(
     ModuleMap* module_map, const char* name, const uint8_t* file, size_t file_size, _Bool is_dll,
     ImageArch arch, LoadBuiltinsFn load_builtins
 );
-
-int start_image(ModuleMap* module_map, Module* module);
-void detach_image(ModuleMap* module_map, Module* module);

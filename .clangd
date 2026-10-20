@@ -1,5 +1,6 @@
 CompileFlags:
   Add: [-xc, -DIMAGE_ARCH=IMAGE_ARCH_EITHER, -DELFINATOR_COMPAT]
+#  Add: [-xc, -DIMAGE_ARCH=IMAGE_ARCH_PE_PLUS]
 ---
 If:
   PathMatch: examples/.*
