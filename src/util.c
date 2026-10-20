@@ -26,7 +26,7 @@ void pmsg_exit(const char* fmt, ...) {
 }
 
 uint8_t* map_file(const char* path, size_t* size_out) {
-    assert(size_out);
+    assert(path && size_out);
 
     int fd = open(path, O_RDONLY);
     if (fd < 0) {
@@ -53,6 +53,8 @@ uint8_t* map_file(const char* path, size_t* size_out) {
 }
 
 size_t round_up_pow2(size_t value, size_t align_pow2) {
+    assert(align_pow2 != 0 && is_pow2(align_pow2));
+
     return (value + align_pow2 - 1) & ~(align_pow2 - 1);
 }
 

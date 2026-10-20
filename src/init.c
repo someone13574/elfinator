@@ -17,7 +17,9 @@
 #include "../common/unicode.h"
 #include "compat.h"
 #include "compat_arena.h"
+#include "module_map.h"
 #include "pe_types.h"
+#include "tls.h"
 #include "util.h"
 
 #define WIN_MAX_PATH 260
@@ -49,6 +51,8 @@ typedef struct {
 
 static StringLayout
 layout_string(size_t* size, size_t units, size_t min_maximum_length, const char* name) {
+    assert(size && name);
+
     size_t length = units * sizeof(uint16_t);
     size_t maximum_length = length + sizeof(uint16_t);
     if (maximum_length < min_maximum_length) {
@@ -71,8 +75,9 @@ static uint32_t number_of_processors(void) {
     return count < 1 ? 1 : (uint32_t)count;
 }
 
-// Uniprocessor images get a single rotating processor, which starts at processor 0
 static uint64_t process_affinity_mask(const ImageNtHeaders* nt) {
+    assert(nt);
+
     if (nt->file_header.characteristics & IMAGE_FILE_UP_SYSTEM_ONLY) {
         return 1;
     }
@@ -82,6 +87,8 @@ static uint64_t process_affinity_mask(const ImageNtHeaders* nt) {
 }
 
 static OsVersion os_version(const ImageNtHeaders* nt) {
+    assert(nt);
+
     uint32_t value = nt->is_64bit ? nt->u64.win32_version_value : nt->u32.win32_version_value;
     if (value == 0) {
         return (OsVersion){.major = WIN_OS_MAJOR_VERSION,
@@ -105,6 +112,8 @@ static UnicodeString32 unicode_string32(uint32_t strings, StringLayout layout) {
 }
 
 static void init_parameters32(ProcessParameters32* params, const ParameterLayout* layout) {
+    assert(params && layout);
+
     uint32_t strings = (uint32_t)(uintptr_t)(params + 1);
     params->maximum_length = (uint32_t)(sizeof(*params) + layout->size);
     params->length = params->maximum_length;
@@ -117,6 +126,8 @@ static void init_parameters32(ProcessParameters32* params, const ParameterLayout
 static void init_peb32(
     ProcessEnvironmentBlock32* peb, const Module* module, const ProcessParameters32* params
 ) {
+    assert(peb && module && params && !module->image.nt.is_64bit);
+
     const ImageOptionalHeaders32* optional = &module->image.nt.u32;
     if ((uintptr_t)module->image.base != optional->image_base) {
         peb->bit_field |= PEB_IMAGE_DYNAMICALLY_RELOCATED;
@@ -142,6 +153,8 @@ static void init_teb32(
     ThreadEnvironmentBlock32* teb, const ProcessEnvironmentBlock32* peb, uint32_t stack_base,
     uint32_t stack_limit, uint32_t deallocation_stack
 ) {
+    assert(teb && peb);
+
     teb->nt_tib.exception_list_ptr = 0xffffffff;
     teb->nt_tib.stack_base_ptr = stack_base;
     teb->nt_tib.stack_limit_ptr = stack_limit;
@@ -173,6 +186,8 @@ static UnicodeString64 unicode_string64(uint64_t strings, StringLayout layout) {
 }
 
 static void init_parameters64(ProcessParameters64* params, const ParameterLayout* layout) {
+    assert(params && layout);
+
     uint64_t strings = (uint64_t)(uintptr_t)(params + 1);
     params->maximum_length = (uint32_t)(sizeof(*params) + layout->size);
     params->length = params->maximum_length;
@@ -185,6 +200,8 @@ static void init_parameters64(ProcessParameters64* params, const ParameterLayout
 static void init_peb64(
     ProcessEnvironmentBlock64* peb, const Module* module, const ProcessParameters64* params
 ) {
+    assert(peb && module && params);
+
     const ImageNtHeaders* nt = &module->image.nt;
     uint64_t preferred_base = nt->is_64bit ? nt->u64.image_base : nt->u32.image_base;
     if ((uintptr_t)module->image.base != preferred_base) {
@@ -213,6 +230,8 @@ static void init_teb64(
     ThreadEnvironmentBlock64* teb, const ProcessEnvironmentBlock64* peb, uint64_t stack_base,
     uint64_t stack_limit, uint64_t deallocation_stack
 ) {
+    assert(teb && peb);
+
     teb->nt_tib.stack_base_ptr = stack_base;
     teb->nt_tib.stack_limit_ptr = stack_limit;
     teb->nt_tib.version = 0x1e00; // OS/2 1.30 TIB
@@ -236,6 +255,9 @@ static void init_teb64(
 
 static void* map_or_exit(size_t size, size_t align, const char* name) {
     size_t page_size = sysconf(_SC_PAGESIZE);
+    assert(size > 0 && name);
+    assert(is_pow2(align) && align % page_size == 0);
+
     size = round_up_pow2(size, page_size);
 
     size_t reserve_size = size + align - page_size;
@@ -260,6 +282,8 @@ static void* map_or_exit(size_t size, size_t align, const char* name) {
 }
 
 static uint8_t* init_native_process(Process* process, const ParameterLayout* layout) {
+    assert(process && process->image && layout);
+
     size_t page_size = sysconf(_SC_PAGESIZE);
 #ifdef __x86_64__
     process->peb64 = map_or_exit(sizeof(ProcessEnvironmentBlock64), page_size, "mmap peb");
@@ -286,6 +310,8 @@ static uint8_t* init_native_process(Process* process, const ParameterLayout* lay
 #ifdef ELFINATOR_COMPAT
 
 static void* compat_alloc_or_exit(size_t size, size_t align, const char* name) {
+    assert(size > 0 && name);
+
     size_t page_size = sysconf(_SC_PAGESIZE);
     void* ptr = compat_arena_alloc(0, round_up_pow2(size, page_size), align);
     if (!ptr) {
@@ -297,6 +323,8 @@ static void* compat_alloc_or_exit(size_t size, size_t align, const char* name) {
 
 static uint8_t*
 init_compat_process(Process* process, const ParameterLayout* layout, uint8_t** strings32_out) {
+    assert(process && process->image && layout && strings32_out);
+
     size_t page_size = sysconf(_SC_PAGESIZE);
     size_t peb32_offset = round_up_pow2(sizeof(ProcessEnvironmentBlock64), page_size);
     uint8_t* pebs =
@@ -445,6 +473,8 @@ Process process_init(Module* root_module, int argc, char** argv) {
 
 static void
 host_stack_location(uintptr_t* base_out, uintptr_t* limit_out, uintptr_t* deallocation_out) {
+    assert(base_out && limit_out && deallocation_out);
+
     pthread_attr_t attr;
     int err = pthread_getattr_np(pthread_self(), &attr);
     if (err != 0) {
@@ -469,6 +499,9 @@ host_stack_location(uintptr_t* base_out, uintptr_t* limit_out, uintptr_t* deallo
 // Returns the selector of a descriptor for the 32-bit TEB in the calling thread's GDT TLS entries.
 // desc must be below 4GB
 static uint16_t set_teb32_descriptor(ThreadEnvironmentBlock32* teb, struct user_desc* desc) {
+    assert(teb && desc);
+    assert((uint64_t)(uintptr_t)teb < (1ull << 32) && (uint64_t)(uintptr_t)desc < (1ull << 32));
+
     static int entry_number = -1;
     *desc = (struct user_desc){.entry_number = (unsigned int)entry_number,
                                .base_addr = (uint32_t)(uintptr_t)teb,
@@ -497,7 +530,9 @@ static uint16_t set_teb32_descriptor(ThreadEnvironmentBlock32* teb, struct user_
 
 #endif
 
-static void init_native_thread(const Process* process) {
+static void init_native_thread(const Process* process, const ModuleMap* module_map) {
+    assert(process && module_map);
+
     uintptr_t stack_base;
     uintptr_t stack_limit;
     uintptr_t deallocation_stack;
@@ -507,10 +542,14 @@ static void init_native_thread(const Process* process) {
 #ifdef __x86_64__
     ThreadEnvironmentBlock64* teb = map_or_exit(sizeof(*teb), page_size, "mmap teb");
     init_teb64(teb, process->peb64, stack_base, stack_limit, deallocation_stack);
+    teb->thread_local_storage_pointer_ptr =
+        (uint64_t)(uintptr_t)alloc_thread_tls(module_map, true, map_or_exit);
     __asm__ volatile("wrgsbase %0" ::"r"(teb));
 #else
     ThreadEnvironmentBlock32* teb = map_or_exit(sizeof(*teb), page_size, "mmap teb");
     init_teb32(teb, process->peb32, stack_base, stack_limit, deallocation_stack);
+    teb->thread_local_storage_pointer_ptr =
+        (uint32_t)(uintptr_t)alloc_thread_tls(module_map, false, map_or_exit);
     struct user_desc desc;
     uint16_t selector = set_teb32_descriptor(teb, &desc);
     __asm__ volatile("mov %0, %%fs" ::"r"(selector));
@@ -519,7 +558,9 @@ static void init_native_thread(const Process* process) {
 
 #ifdef ELFINATOR_COMPAT
 
-static void init_compat_thread(const Process* process) {
+static void init_compat_thread(const Process* process, const ModuleMap* module_map) {
+    assert(process && process->image && module_map);
+
     uintptr_t stack_base;
     uintptr_t stack_limit;
     uintptr_t deallocation_stack;
@@ -545,6 +586,8 @@ static void init_compat_thread(const Process* process) {
     teb64->wow_teb_offset = (int32_t)teb32_offset;
     teb32->gdi_batch_count = (uint32_t)(uintptr_t)teb64;
     teb32->wow_teb_offset = -(int32_t)teb32_offset;
+    teb32->thread_local_storage_pointer_ptr =
+        (uint32_t)(uintptr_t)alloc_thread_tls(module_map, false, compat_alloc_or_exit);
 
     __asm__ volatile("wrgsbase %0" ::"r"(teb64));
 
@@ -555,14 +598,14 @@ static void init_compat_thread(const Process* process) {
 
 #endif
 
-void thread_init(const Process* process) {
-    assert(process && process->image);
+void thread_init(const Process* process, const ModuleMap* module_map) {
+    assert(process && process->image && module_map);
 
 #ifdef ELFINATOR_COMPAT
     if (!process->image->image.nt.is_64bit) {
-        init_compat_thread(process);
+        init_compat_thread(process, module_map);
         return;
     }
 #endif
-    init_native_thread(process);
+    init_native_thread(process, module_map);
 }

@@ -14,4 +14,4 @@ typedef struct {
 } Process;
 
 Process process_init(Module* root_module, int argc, char** argv);
-void thread_init(const Process* process);
+void thread_init(const Process* process, const ModuleMap* module_map);

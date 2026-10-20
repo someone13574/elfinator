@@ -26,6 +26,7 @@ typedef struct Module {
             size_t size;
             ImageNtHeaders nt;
             uint32_t tls_index;
+            ImageTlsDirectory tls;
         } image;
 
         struct {

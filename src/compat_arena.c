@@ -125,6 +125,8 @@ static size_t range_list_sum(const U64RangeList* list) {
 }
 
 static void reserve_range(uint64_t start, uint64_t end, uint64_t page_size) {
+    assert(start < end && start % page_size == 0 && end % page_size == 0);
+
     void* ptr = mmap(
         (void*)start, end - start, PROT_NONE,
         MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0

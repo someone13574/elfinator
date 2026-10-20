@@ -96,6 +96,7 @@ void compat_set_teb32_selector(uint16_t selector) {
 
 uint32_t compat_call32(uint32_t fn, const uint32_t* args, uint32_t nargs) {
     assert(call32 && stack_top != 0 && teb32_selector != 0);
+    assert(args || nargs == 0);
     return call32(fn, stack_top, args, nargs, teb32_selector);
 }
 

@@ -197,7 +197,7 @@ typedef struct __attribute__((packed)) {
     uint64_t start_address_of_raw_data;
     uint64_t end_address_of_raw_data;
     uint64_t address_of_index;
-    uint64_t address_of_call_backs;
+    uint64_t address_of_callbacks;
     uint32_t size_of_zero_fill;
     uint32_t characteristics;
 } ImageTlsDirectory;

@@ -18,6 +18,43 @@
 #define WINAPI __attribute__((ms_abi))
 #endif
 
+static void call_tls_callbacks(const Module* module, uint32_t reason) {
+    assert(module && !module->is_builtin);
+
+    if (module->image.tls_index == UINT32_MAX || module->image.tls.address_of_callbacks == 0) {
+        return;
+    }
+
+    size_t ptr_size = module->image.nt.is_64bit ? sizeof(uint64_t) : sizeof(uint32_t);
+    for (size_t offset = module->image.tls.address_of_callbacks;; offset += ptr_size) {
+        const void* entry =
+            rva_offset_ranged(module->image.base, offset, ptr_size, module->image.size);
+        uint64_t addr =
+            module->image.nt.is_64bit ? *(const u64_align1*)entry : *(const u32_align1*)entry;
+        if (addr == 0) {
+            break;
+        }
+
+        typedef void(WINAPI * TlsCallback)(void* hinst, uint32_t reason, void* reserved);
+        TlsCallback callback = (TlsCallback)(uintptr_t)addr;
+        printf("[loader] calling %s tls callback at %p\n\n", module->name, (void*)callback);
+
+        fflush(stdout);
+#ifdef ELFINATOR_COMPAT
+        if (!module->image.nt.is_64bit) {
+            uint32_t args[3] = {(uint32_t)(uintptr_t)module->image.base, reason, 0};
+            compat_call32((uint32_t)addr, args, 3);
+        } else {
+            callback(module->image.base, reason, NULL);
+        }
+#else
+        callback(module->image.base, reason, NULL);
+#endif
+
+        printf("\n[loader] tls callback returned\n");
+    }
+}
+
 int start_image(ModuleMap* module_map, Module* module) {
     assert(module_map && module);
 
@@ -52,6 +89,8 @@ int start_image(ModuleMap* module_map, Module* module) {
     } else {
         printf("[loader] no imports\n");
     }
+
+    call_tls_callbacks(module, DLL_PROCESS_ATTACH);
 
     uint32_t address_of_entry_point = module->image.nt.is_64bit
                                           ? module->image.nt.u64.address_of_entry_point
@@ -112,7 +151,7 @@ int start_image(ModuleMap* module_map, Module* module) {
     }
 }
 
-void detach_image(ModuleMap* module_map, Module* module) {
+static void detach_module_tree(ModuleMap* module_map, Module* module) {
     assert(module_map && module);
 
     if (module->is_builtin) {
@@ -125,6 +164,10 @@ void detach_image(ModuleMap* module_map, Module* module) {
 
     printf("[loader] detaching module %s\n", module->name);
     module->state = MODULE_MAPPED;
+
+    if (module->image.is_dll) {
+        call_tls_callbacks(module, DLL_PROCESS_DETACH);
+    }
 
     uint32_t address_of_entry_point = module->image.nt.is_64bit
                                           ? module->image.nt.u64.address_of_entry_point
@@ -169,7 +212,20 @@ void detach_image(ModuleMap* module_map, Module* module) {
             const char* dependency_name =
                 rva_cstring(module->image.base, desc->name, module->image.size);
             Module* dependency = module_map_get(module_map, dependency_name, true);
-            detach_image(module_map, dependency);
+            detach_module_tree(module_map, dependency);
         }
+    }
+}
+
+void detach_image(ModuleMap* module_map, Module* module) {
+    assert(module_map && module);
+
+    if (module->is_builtin || module->state != MODULE_INITIALIZED) {
+        return;
+    }
+
+    detach_module_tree(module_map, module);
+    if (!module->image.is_dll) {
+        call_tls_callbacks(module, DLL_PROCESS_DETACH);
     }
 }

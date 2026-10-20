@@ -1,4 +1,5 @@
 #include <asm/hwcap2.h>
+#include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -14,6 +15,8 @@
 #include "util.h"
 
 static void load_builtins(ModuleMap* module_map, _Bool is_64bit) {
+    assert(module_map);
+
 #ifdef ELFINATOR_COMPAT
     if (!is_64bit) {
         static BuiltinExport call64_export = {.name = "elfinator_call64"};
@@ -66,7 +69,7 @@ int main(int argc, char** argv) {
     Module* root_module =
         map_image(&module_map, exe_name, file, file_size, false, IMAGE_ARCH, load_builtins);
     Process process = process_init(root_module, argc, argv);
-    thread_init(&process);
+    thread_init(&process, &module_map);
     int code = start_image(&module_map, root_module);
     detach_image(&module_map, root_module);
 

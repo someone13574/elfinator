@@ -247,7 +247,8 @@ Module* map_image(
 
     apply_relocations(base, image_size, &nt);
 
-    uint32_t tls_index = init_image_tls(module_map, base, image_size, &nt);
+    ImageTlsDirectory tls;
+    uint32_t tls_index = init_image_tls(module_map, base, image_size, &nt, &tls);
 
     module_map_insert(
         module_map, (Module){.name = name,
@@ -257,7 +258,8 @@ Module* map_image(
                              .image.base = base,
                              .image.size = image_size,
                              .image.nt = nt,
-                             .image.tls_index = tls_index}
+                             .image.tls_index = tls_index,
+                             .image.tls = tls}
     );
 
     resolve_imports(base, image_size, &nt, module_map);
