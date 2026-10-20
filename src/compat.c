@@ -24,6 +24,7 @@ extern const uint8_t call64_dispatch[];
 
 static uint32_t (*call32)(uint32_t fn, uint32_t stack_top, const uint32_t* args, uint32_t nargs);
 static _Thread_local uint32_t stack_top;
+static _Thread_local uint32_t call32_depth;
 static uint8_t* compat_base;
 
 void compat_init(uint64_t limit) {
@@ -85,7 +86,12 @@ void compat_alloc_stack(uint32_t stack_reserve) {
 
 uint32_t compat_call32(uint32_t fn, const uint32_t* args, uint32_t nargs) {
     assert(call32 && stack_top != 0);
-    return call32(fn, stack_top, args, nargs);
+
+    uint32_t top = call32_depth == 0 ? stack_top : 0;
+    call32_depth++;
+    uint32_t ret = call32(fn, top, args, nargs);
+    call32_depth--;
+    return ret;
 }
 
 #endif

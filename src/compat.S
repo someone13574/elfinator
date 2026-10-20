@@ -10,6 +10,7 @@ compat_start:
     .code64
     // uint32_t call32(uint32_t rdi/fn, uint32_t rsi/stack_top, const uint32_t* rdx/args, uint32_t rcx/nargs)
     // Enters in SysV x86-64 (must preserve rbx, rbp, rsp, r12-r15)
+    // stack_top == 0 means we're already on the 32-bit stack
 call32_enter:
     // Remember preserved (non-sp) registers
     push %rbx
@@ -21,7 +22,10 @@ call32_enter:
 
     // Save 64-bit sp on 32-bit stack, move to 32-bit stack, and save 32-bit sp in ebx
     mov %rsp, %rax
+    test %esi, %esi
+    jz .Lcall32_keep_stack
     mov %esi, %esp
+.Lcall32_keep_stack:
     push %rax
     mov %esp, %ebx // `fn` could be cdecl (callee doesn't clean stack), so save esp (ebx is preserved by i386 windows)
 
