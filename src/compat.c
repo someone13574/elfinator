@@ -23,8 +23,11 @@ extern const uint8_t call64_dispatch[];
 // Windows linker default when the image doesn't specify one
 #define COMPAT_DEFAULT_STACK_RESERVE 0x100000u
 
-static uint32_t (*call32)(uint32_t fn, uint32_t stack_top, const uint32_t* args, uint32_t nargs);
+static uint32_t (*call32)(
+    uint32_t fn, uint32_t stack_top, const uint32_t* args, uint32_t nargs, uint16_t teb32_selector
+);
 static _Thread_local uint32_t stack_top;
+static _Thread_local uint16_t teb32_selector;
 static uint8_t* compat_base;
 
 void compat_init(uint64_t limit) {
@@ -64,8 +67,8 @@ void* compat_call64_entry(void) {
     return compat_base + (call64_enter - compat_start);
 }
 
-void compat_alloc_stack(uint32_t stack_reserve) {
-    assert(stack_top == 0);
+uint8_t* compat_alloc_stack(uint32_t stack_reserve, size_t* size_out) {
+    assert(size_out && stack_top == 0);
     size_t page_size = sysconf(_SC_PAGESIZE);
 
     if (stack_reserve == 0) {
@@ -82,11 +85,18 @@ void compat_alloc_stack(uint32_t stack_reserve) {
     }
 
     stack_top = (uint32_t)(uintptr_t)(stack + stack_size);
+    *size_out = stack_size;
+    return stack;
+}
+
+void compat_set_teb32_selector(uint16_t selector) {
+    assert(selector != 0 && teb32_selector == 0);
+    teb32_selector = selector;
 }
 
 uint32_t compat_call32(uint32_t fn, const uint32_t* args, uint32_t nargs) {
-    assert(call32 && stack_top != 0);
-    return call32(fn, stack_top, args, nargs);
+    assert(call32 && stack_top != 0 && teb32_selector != 0);
+    return call32(fn, stack_top, args, nargs, teb32_selector);
 }
 
 #endif

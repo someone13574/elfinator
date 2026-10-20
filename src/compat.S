@@ -8,7 +8,7 @@
 compat_start:
 
     .code64
-    // uint32_t call32(uint32_t rdi/fn, uint32_t rsi/stack_top, const uint32_t* rdx/args, uint32_t rcx/nargs)
+    // uint32_t call32(uint32_t rdi/fn, uint32_t rsi/stack_top, const uint32_t* rdx/args, uint32_t rcx/nargs, uint16_t r8/teb32_selector)
     // Enters in SysV x86-64 (must preserve rbx, rbp, rsp, r12-r15)
 call32_enter:
     // Remember preserved (non-sp) registers
@@ -18,6 +18,11 @@ call32_enter:
     push %r13
     push %r14
     push %r15
+
+    // FS is replaced by the 32-bit TEB selector, so save the host's FS base in the 64-bit TEB's
+    // GdiTebBatch
+    rdfsbase %rax
+    mov %rax, %gs:0x2f0
 
     // Save 64-bit sp on 32-bit stack, move to 32-bit stack, and save 32-bit sp in ebx
     mov %rsp, %rax
@@ -40,7 +45,8 @@ call32_enter:
     dec %ecx
     jnz .Lcall32_copy_arg
 .Lcall32_args_done:
-    // Far jump to call32_in32 in 32-bit mode
+    // Point FS at the 32-bit TEB, and far jump to call32_in32 in 32-bit mode
+    mov %r8w, %fs
     pushq $0x23
     lea call32_restore(%rip), %rsi
     lea call32_in32(%rip), %rax
@@ -66,6 +72,11 @@ call32_in32:
 call32_restore:
     mov %ebx, %esp // cdecl callees leave their args behind, esp can't be trusted
     pop %rsp // restore 64-bit stack
+
+    // Restore the host's FS base
+    mov %gs:0x2f0, %rcx // 64-bit TEB GdiTebBatch
+    wrfsbase %rcx
+
     pop %r15 // restore callee-saved registers to get back to SysV abi
     pop %r14
     pop %r13
@@ -84,10 +95,11 @@ call64_enter:
     push %ebp
     mov %esp, %ebp // save sp since we do a 16-byte align later
 
-    // Save callee saved regs
+    // Save callee saved regs, and FS (the TEB) since the host's FS base is restored for 64-bit
     push %ebx
     push %esi
     push %edi
+    push %fs
 
     // Get call64_in64 address (no rip-relative)
     call .Lcall64_measure_pos
@@ -105,6 +117,10 @@ call64_enter:
 call64_in64:
     mov %esp, %esp // zero-extend
     mov %ebp, %ebp
+
+    // Restore the host's FS base
+    mov %gs:0x2f0, %rax // 64-bit TEB GdiTebBatch
+    wrfsbase %rax
 
     // Move cdecl args to sysv (edi, esi, edx)
     mov 8(%rbp), %edi
@@ -124,7 +140,8 @@ call64_in64:
     .code32
     // Back in 32-bit
 call64_restore:
-    lea -12(%ebp), %esp
+    lea -16(%ebp), %esp
+    pop %fs
     pop %edi
     pop %esi
     pop %ebx

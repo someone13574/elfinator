@@ -274,6 +274,77 @@ _Static_assert(offsetof(ProcessEnvironmentBlock32, os_build_number) == 0xac, "PE
 _Static_assert(offsetof(ProcessEnvironmentBlock32, image_subsystem) == 0xb4, "PEB32 offset");
 _Static_assert(offsetof(ProcessEnvironmentBlock32, session_id) == 0x1d4, "PEB32 offset");
 
+typedef struct {
+    uint32_t flink_ptr;
+    uint32_t blink_ptr;
+} ListEntry32;
+
+typedef struct {
+    uint32_t unique_process_ptr;
+    uint32_t unique_thread_ptr;
+} ClientId32;
+
+typedef struct {
+    uint32_t exception_list_ptr;
+    uint32_t stack_base_ptr;
+    uint32_t stack_limit_ptr;
+    uint32_t sub_system_tib_ptr;
+
+    union {
+        uint32_t fiber_data_ptr;
+        uint32_t version;
+    };
+
+    uint32_t arbitrary_user_pointer_ptr;
+    uint32_t self_ptr;
+} NtTib32;
+
+typedef struct {
+    uint32_t active_frame_ptr;
+    ListEntry32 frame_list_cache;
+    uint32_t flags;
+    uint32_t next_cookie_sequence_number;
+    uint32_t stack_id;
+} ActivationContextStack32;
+
+typedef struct {
+    NtTib32 nt_tib;
+    uint32_t environment_pointer_ptr;
+    ClientId32 client_id;
+    uint32_t active_rpc_handle_ptr;
+    uint32_t thread_local_storage_pointer_ptr;
+    uint32_t process_environment_block_ptr;
+    uint32_t last_error_value;
+    uint8_t reserved1[0x8c];
+    uint32_t current_locale;
+    uint8_t reserved2[0xbc];
+    ActivationContextStack32 activation_stack;
+    uint8_t reserved3[0xc];
+    uint32_t activation_context_stack_pointer_ptr;
+    uint8_t reserved4[0x508];
+    ClientId32 real_client_id;
+    uint8_t reserved5[0x53c];
+    UnicodeString32 static_unicode_string;
+    uint16_t static_unicode_buffer[261];
+    uint8_t reserved6[0x2];
+    uint32_t deallocation_stack_ptr;
+    uint32_t tls_slots_ptr[64];
+    ListEntry32 tls_links;
+    uint8_t reserved7[0x58];
+    uint32_t gdi_batch_count;
+    uint8_t reserved8[0x68];
+    int32_t wow_teb_offset;
+    uint8_t reserved9[0x58];
+} ThreadEnvironmentBlock32;
+
+_Static_assert(sizeof(ThreadEnvironmentBlock32) == 0x1038, "TEB32 size");
+_Static_assert(
+    offsetof(ThreadEnvironmentBlock32, process_environment_block_ptr) == 0x30, "TEB32 offset"
+);
+_Static_assert(offsetof(ThreadEnvironmentBlock32, activation_stack) == 0x184, "TEB32 offset");
+_Static_assert(offsetof(ThreadEnvironmentBlock32, static_unicode_string) == 0xbf8, "TEB32 offset");
+_Static_assert(offsetof(ThreadEnvironmentBlock32, wow_teb_offset) == 0xfdc, "TEB32 offset");
+
 #endif // __i386__ || ELFINATOR_COMPAT
 
 #ifdef __x86_64__
@@ -343,6 +414,77 @@ _Static_assert(offsetof(ProcessEnvironmentBlock64, number_of_processors) == 0xb8
 _Static_assert(offsetof(ProcessEnvironmentBlock64, os_build_number) == 0x120, "PEB64 offset");
 _Static_assert(offsetof(ProcessEnvironmentBlock64, image_subsystem) == 0x128, "PEB64 offset");
 _Static_assert(offsetof(ProcessEnvironmentBlock64, session_id) == 0x2c0, "PEB64 offset");
+
+typedef struct {
+    uint64_t flink_ptr;
+    uint64_t blink_ptr;
+} ListEntry64;
+
+typedef struct {
+    uint64_t unique_process_ptr;
+    uint64_t unique_thread_ptr;
+} ClientId64;
+
+typedef struct {
+    uint64_t exception_list_ptr;
+    uint64_t stack_base_ptr;
+    uint64_t stack_limit_ptr;
+    uint64_t sub_system_tib_ptr;
+
+    union {
+        uint64_t fiber_data_ptr;
+        uint32_t version;
+    };
+
+    uint64_t arbitrary_user_pointer_ptr;
+    uint64_t self_ptr;
+} NtTib64;
+
+typedef struct {
+    uint64_t active_frame_ptr;
+    ListEntry64 frame_list_cache;
+    uint32_t flags;
+    uint32_t next_cookie_sequence_number;
+    uint32_t stack_id;
+} ActivationContextStack64;
+
+typedef struct {
+    NtTib64 nt_tib;
+    uint64_t environment_pointer_ptr;
+    ClientId64 client_id;
+    uint64_t active_rpc_handle_ptr;
+    uint64_t thread_local_storage_pointer_ptr;
+    uint64_t process_environment_block_ptr;
+    uint32_t last_error_value;
+    uint8_t reserved1[0x9c];
+    uint32_t current_locale;
+    uint8_t reserved2[0x184];
+    ActivationContextStack64 activation_stack;
+    uint8_t reserved3[0x10];
+    uint64_t activation_context_stack_pointer_ptr;
+    uint8_t reserved4[0x20];
+    uint8_t gdi_teb_batch[0x4e8];
+    ClientId64 real_client_id;
+    uint8_t reserved5[0xa70];
+    UnicodeString64 static_unicode_string;
+    uint16_t static_unicode_buffer[261];
+    uint8_t reserved6[0x6];
+    uint64_t deallocation_stack_ptr;
+    uint64_t tls_slots_ptr[64];
+    ListEntry64 tls_links;
+    uint8_t reserved7[0x17c];
+    int32_t wow_teb_offset;
+    uint8_t reserved8[0x68];
+} ThreadEnvironmentBlock64;
+
+_Static_assert(sizeof(ThreadEnvironmentBlock64) == 0x1878, "TEB64 size");
+_Static_assert(
+    offsetof(ThreadEnvironmentBlock64, process_environment_block_ptr) == 0x60, "TEB64 offset"
+);
+_Static_assert(offsetof(ThreadEnvironmentBlock64, activation_stack) == 0x290, "TEB64 offset");
+_Static_assert(offsetof(ThreadEnvironmentBlock64, gdi_teb_batch) == 0x2f0, "TEB64 offset");
+_Static_assert(offsetof(ThreadEnvironmentBlock64, static_unicode_string) == 0x1258, "TEB64 offset");
+_Static_assert(offsetof(ThreadEnvironmentBlock64, wow_teb_offset) == 0x180c, "TEB64 offset");
 
 #endif // __x86_64__
 

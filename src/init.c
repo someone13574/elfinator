@@ -1,8 +1,11 @@
 #define _GNU_SOURCE
 #include "init.h"
 
+#include <asm/ldt.h>
 #include <assert.h>
+#include <errno.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -135,6 +138,30 @@ static void init_peb32(
     peb->session_id = 1;
 }
 
+static void init_teb32(
+    ThreadEnvironmentBlock32* teb, const ProcessEnvironmentBlock32* peb, uint32_t stack_base,
+    uint32_t stack_limit, uint32_t deallocation_stack
+) {
+    teb->nt_tib.exception_list_ptr = 0xffffffff;
+    teb->nt_tib.stack_base_ptr = stack_base;
+    teb->nt_tib.stack_limit_ptr = stack_limit;
+    teb->nt_tib.version = 0x1e00; // OS/2 1.30 TIB
+    teb->nt_tib.self_ptr = (uint32_t)(uintptr_t)teb;
+    teb->client_id.unique_process_ptr = (uint32_t)getpid();
+    teb->client_id.unique_thread_ptr = (uint32_t)gettid();
+    teb->process_environment_block_ptr = (uint32_t)(uintptr_t)peb;
+    teb->current_locale = 0x0409; // en-US
+    teb->activation_context_stack_pointer_ptr = (uint32_t)(uintptr_t)&teb->activation_stack;
+
+    uint32_t frame_list_cache = (uint32_t)(uintptr_t)&teb->activation_stack.frame_list_cache;
+    teb->activation_stack.frame_list_cache.flink_ptr = frame_list_cache;
+    teb->activation_stack.frame_list_cache.blink_ptr = frame_list_cache;
+    teb->real_client_id = teb->client_id;
+    teb->static_unicode_string.maximum_length = sizeof(teb->static_unicode_buffer);
+    teb->static_unicode_string.buffer = (uint32_t)(uintptr_t)teb->static_unicode_buffer;
+    teb->deallocation_stack_ptr = deallocation_stack;
+}
+
 #endif
 
 #ifdef __x86_64__
@@ -180,6 +207,29 @@ static void init_peb64(
         nt->is_64bit ? nt->u64.minor_subsystem_version : nt->u32.minor_subsystem_version;
     peb->active_process_affinity_mask = process_affinity_mask(nt);
     peb->session_id = 1;
+}
+
+static void init_teb64(
+    ThreadEnvironmentBlock64* teb, const ProcessEnvironmentBlock64* peb, uint64_t stack_base,
+    uint64_t stack_limit, uint64_t deallocation_stack
+) {
+    teb->nt_tib.stack_base_ptr = stack_base;
+    teb->nt_tib.stack_limit_ptr = stack_limit;
+    teb->nt_tib.version = 0x1e00; // OS/2 1.30 TIB
+    teb->nt_tib.self_ptr = (uint64_t)(uintptr_t)teb;
+    teb->client_id.unique_process_ptr = (uint64_t)getpid();
+    teb->client_id.unique_thread_ptr = (uint64_t)gettid();
+    teb->process_environment_block_ptr = (uint64_t)(uintptr_t)peb;
+    teb->current_locale = 0x0409; // en-US
+    teb->activation_context_stack_pointer_ptr = (uint64_t)(uintptr_t)&teb->activation_stack;
+
+    uint64_t frame_list_cache = (uint64_t)(uintptr_t)&teb->activation_stack.frame_list_cache;
+    teb->activation_stack.frame_list_cache.flink_ptr = frame_list_cache;
+    teb->activation_stack.frame_list_cache.blink_ptr = frame_list_cache;
+    teb->real_client_id = teb->client_id;
+    teb->static_unicode_string.maximum_length = sizeof(teb->static_unicode_buffer);
+    teb->static_unicode_string.buffer = (uint64_t)(uintptr_t)teb->static_unicode_buffer;
+    teb->deallocation_stack_ptr = deallocation_stack;
 }
 
 #endif
@@ -393,12 +443,126 @@ Process process_init(Module* root_module, int argc, char** argv) {
     return process;
 }
 
+static void
+host_stack_location(uintptr_t* base_out, uintptr_t* limit_out, uintptr_t* deallocation_out) {
+    pthread_attr_t attr;
+    int err = pthread_getattr_np(pthread_self(), &attr);
+    if (err != 0) {
+        errno = err;
+        perror_exit("pthread_getattr_np");
+    }
+
+    void* addr;
+    size_t size;
+    size_t guard_size;
+    pthread_attr_getstack(&attr, &addr, &size);
+    pthread_attr_getguardsize(&attr, &guard_size);
+    pthread_attr_destroy(&attr);
+
+    *base_out = (uintptr_t)addr + size;
+    *limit_out = (uintptr_t)addr;
+    *deallocation_out = (uintptr_t)addr - guard_size;
+}
+
+#if defined(__i386__) || defined(ELFINATOR_COMPAT)
+
+// Returns the selector of a descriptor for the 32-bit TEB in the calling thread's GDT TLS entries.
+// desc must be below 4GB
+static uint16_t set_teb32_descriptor(ThreadEnvironmentBlock32* teb, struct user_desc* desc) {
+    static int entry_number = -1;
+    *desc = (struct user_desc){.entry_number = (unsigned int)entry_number,
+                               .base_addr = (uint32_t)(uintptr_t)teb,
+                               .limit = 0xfff,
+                               .seg_32bit = 1,
+                               .contents = MODIFY_LDT_CONTENTS_DATA,
+                               .useable = 1};
+
+    int ret;
+#ifdef __x86_64__
+    __asm__ volatile("int $0x80"
+                     : "=a"(ret)
+                     : "0"(243), "b"(desc)
+                     : "r8", "r9", "r10", "r11", "memory");
+#else
+    __asm__ volatile("int $0x80" : "=a"(ret) : "0"(243), "b"(desc) : "memory");
+#endif
+    if (ret < 0) {
+        errno = -ret;
+        perror_exit("set_thread_area");
+    }
+
+    entry_number = (int)desc->entry_number;
+    return (uint16_t)(desc->entry_number << 3 | 3);
+}
+
+#endif
+
+static void init_native_thread(const Process* process) {
+    uintptr_t stack_base;
+    uintptr_t stack_limit;
+    uintptr_t deallocation_stack;
+    host_stack_location(&stack_base, &stack_limit, &deallocation_stack);
+
+    size_t page_size = sysconf(_SC_PAGESIZE);
+#ifdef __x86_64__
+    ThreadEnvironmentBlock64* teb = map_or_exit(sizeof(*teb), page_size, "mmap teb");
+    init_teb64(teb, process->peb64, stack_base, stack_limit, deallocation_stack);
+    __asm__ volatile("wrgsbase %0" ::"r"(teb));
+#else
+    ThreadEnvironmentBlock32* teb = map_or_exit(sizeof(*teb), page_size, "mmap teb");
+    init_teb32(teb, process->peb32, stack_base, stack_limit, deallocation_stack);
+    struct user_desc desc;
+    uint16_t selector = set_teb32_descriptor(teb, &desc);
+    __asm__ volatile("mov %0, %%fs" ::"r"(selector));
+#endif
+}
+
+#ifdef ELFINATOR_COMPAT
+
+static void init_compat_thread(const Process* process) {
+    uintptr_t stack_base;
+    uintptr_t stack_limit;
+    uintptr_t deallocation_stack;
+    host_stack_location(&stack_base, &stack_limit, &deallocation_stack);
+
+    size_t page_size = sysconf(_SC_PAGESIZE);
+    size_t stack32_size;
+    uint8_t* stack32 =
+        compat_alloc_stack(process->image->image.nt.u32.size_of_stack_reserve, &stack32_size);
+
+    size_t teb32_offset = round_up_pow2(sizeof(ThreadEnvironmentBlock64), page_size);
+    uint8_t* tebs =
+        compat_alloc_or_exit(teb32_offset + sizeof(ThreadEnvironmentBlock32), page_size, "TEBs");
+    ThreadEnvironmentBlock64* teb64 = (ThreadEnvironmentBlock64*)tebs;
+    ThreadEnvironmentBlock32* teb32 = (ThreadEnvironmentBlock32*)(tebs + teb32_offset);
+
+    init_teb64(teb64, process->peb64, stack_base, stack_limit, deallocation_stack);
+    init_teb32(
+        teb32, process->peb32, (uint32_t)(uintptr_t)(stack32 + stack32_size),
+        (uint32_t)(uintptr_t)(stack32 + page_size), (uint32_t)(uintptr_t)stack32
+    );
+    teb64->nt_tib.exception_list_ptr = (uint64_t)(uintptr_t)teb32;
+    teb64->wow_teb_offset = (int32_t)teb32_offset;
+    teb32->gdi_batch_count = (uint32_t)(uintptr_t)teb64;
+    teb32->wow_teb_offset = -(int32_t)teb32_offset;
+
+    __asm__ volatile("wrgsbase %0" ::"r"(teb64));
+
+    // The 32-bit stack is unused at this point, and is below 4GB
+    struct user_desc* desc = (struct user_desc*)(stack32 + stack32_size) - 1;
+    compat_set_teb32_selector(set_teb32_descriptor(teb32, desc));
+}
+
+#endif
+
 void thread_init(const Process* process) {
     assert(process && process->image);
 
 #ifdef ELFINATOR_COMPAT
     if (!process->image->image.nt.is_64bit) {
-        compat_alloc_stack(process->image->image.nt.u32.size_of_stack_reserve);
+        init_compat_thread(process);
+        return;
     }
 #endif
+    init_native_thread(process);
 }

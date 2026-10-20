@@ -1,6 +1,8 @@
+#include <asm/hwcap2.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/auxv.h>
 #include <unistd.h>
 
 #include "builtin_dlls.h"
@@ -42,6 +44,13 @@ static void load_builtins(ModuleMap* module_map, _Bool is_64bit) {
 }
 
 int main(int argc, char** argv) {
+#ifdef __x86_64__
+    // TEBs are set with wrgsbase, and 32-bit code swaps FS with rdfsbase/wrfsbase
+    if (!(getauxval(AT_HWCAP2) & HWCAP2_FSGSBASE)) {
+        pmsg_exit("FSGSBASE not supported by the CPU or enabled by the kernel (needs Linux 5.9)");
+    }
+#endif
+
     if (argc < 2) {
         fprintf(stderr, "usage: %s program.exe\n", argv[0]);
         return 1;
